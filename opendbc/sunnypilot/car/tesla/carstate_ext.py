@@ -14,15 +14,21 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
-# Hold the scroll wheel click this long to cancel, indexed by the 2-bit
-# BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param).
-# Protocol test (route 00000009--399b5802f2) proved scrollWheelPressed is the ONLY
-# wheel signal on the accessible buses and fires on BOTH wheels for clicks (100-200ms
-# pulses), every scroll tick (~100ms pulses) and holds (continuous). An instant/click
-# trigger is therefore unsafe (every scroll tick would cancel); >= 0.5s continuous
-# hold is inherently scroll- and short-click-proof. Only a long LEFT-wheel hold
-# (chill mode gesture) remains indistinguishable from a cancel hold.
-BUTTON_CANCEL_HOLD_DURATIONS = [0.5, 1.0, 1.5, 2.0]  # seconds, at 100Hz frames
+# Hold this long to cancel, indexed by the 2-bit BUTTON_CANCEL_HOLD flag value
+# (TeslaButtonCancelHoldDuration param). 0.01 = Instant (a plain click cancels).
+#
+# Signal findings (protocol test route 00000009--399b5802f2):
+# - With the VEHICLE bus, VCLEFT_switchStatus carries clean per-wheel signals
+#   (swcRightPressed / swcLeftPressed / per-wheel scroll ticks), so the cancel
+#   trigger uses ONLY the right wheel press: scroll ticks, volume clicks and the
+#   left-wheel chill-mode hold can never cancel. Instant is safe there.
+# - Without the vehicle bus, the only wheel signal is UI_warning.scrollWheelPressed,
+#   which fires on BOTH wheels for clicks (100-200ms pulses), every scroll tick
+#   (~100ms pulses) and holds. Instant is unsafe there (every scroll tick would
+#   cancel), so it is clamped to 0.5s: a continuous hold is inherently scroll- and
+#   short-click-proof; only a long left-wheel hold remains indistinguishable.
+BUTTON_CANCEL_HOLD_DURATIONS = [0.01, 0.5, 1.0, 2.0]  # seconds, at 100Hz frames
+FALLBACK_MIN_HOLD = 0.5  # clamp for the shared-bit path without vehicle bus
 REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
@@ -42,7 +48,11 @@ class CarStateExt:
 
     hold_idx = (1 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT0 else 0) + \
                (2 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1 else 0)
-    self.cancel_hold_frames = int(BUTTON_CANCEL_HOLD_DURATIONS[hold_idx] * 100)
+    hold_duration = BUTTON_CANCEL_HOLD_DURATIONS[hold_idx]
+    if not CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
+      hold_duration = max(hold_duration, FALLBACK_MIN_HOLD)
+    self.cancel_hold_frames = int(hold_duration * 100)
+    self.right_pressed = False
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -53,6 +63,11 @@ class CarStateExt:
 
       ret.buttonEvents = [*create_button_events(self.infotainment_3_finger_press, prev_infotainment_3_finger_press,
                                                 {3: ButtonType.lkas})]
+
+      # VCLEFT_switchStatus is multiplexed and the parser ignores the mux, so only
+      # read the per-wheel switch signals from index-1 frames
+      if int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]) == 1:
+        self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
 
     cp_party = can_parsers[Bus.party]
     cp_ap_party = can_parsers[Bus.ap_party]
@@ -69,12 +84,14 @@ class CarStateExt:
         cancel = True
       self.pre_cancel_prev = pre_cancel
 
-      # The scroll wheel click is normally handled by the AP computer, which openpilot replaces,
-      # so the press goes nowhere and no PRE_CANCEL appears. Read it directly from UI_warning.
-      # Road testing (2026-07-03) showed scrollWheelPressed also fires on scroll ticks and on the
-      # left (volume) wheel, so require a deliberate 1-second HOLD to cancel. The engaged guard
-      # keeps the engaging click itself from canceling.
-      scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
+      # The wheel click is normally handled by the AP computer, which openpilot replaces, so the
+      # press goes nowhere and no PRE_CANCEL appears. Read it from the bus ourselves: preferably
+      # the right-wheel-specific press on the vehicle bus, otherwise the shared UI_warning bit
+      # (both wheels + scroll ticks; see BUTTON_CANCEL_HOLD_DURATIONS notes).
+      if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
+        scroll_wheel_pressed = self.right_pressed
+      else:
+        scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
       self.cruise_enabled_frames = self.cruise_enabled_frames + 1 if ret.cruiseState.enabled else 0
       self.scroll_pressed_frames = self.scroll_pressed_frames + 1 if scroll_wheel_pressed else 0
       if not scroll_wheel_pressed:
