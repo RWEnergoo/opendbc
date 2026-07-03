@@ -17,7 +17,7 @@ ButtonType = structs.CarState.ButtonEvent.Type
 # Hold the scroll wheel click this long to cancel, indexed by the 2-bit
 # BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param)
 BUTTON_CANCEL_HOLD_DURATIONS = [0.5, 1.0, 1.5, 2.0]  # seconds, at 100Hz frames
-REENGAGE_BLOCK_FRAMES = 200  # 2s: block the car's click re-engage after a cancel
+REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
 class CarStateExt:
@@ -30,7 +30,8 @@ class CarStateExt:
     self.scroll_pressed_frames = 0
     self.cruise_enabled_frames = 0
     self.cancel_sent = False
-    self.block_pcm_enable_frames = 0
+    self.await_rearm = False
+    self.released_frames = 0
     self.press_started_engaged = False
 
     hold_idx = (1 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT0 else 0) + \
@@ -81,17 +82,19 @@ class CarStateExt:
         cancel = True
         self.cancel_sent = True
 
-      # The car itself treats the completed click (on release) as an engage command, which would
-      # bounce everything straight back on. Block PCM re-engagement for a short window after a
-      # cancel; the window starts counting down once the button is released.
+      # The car itself can treat the tail of the cancel click as an engage command, which would
+      # bounce everything straight back on. Instead of a timed window, block PCM re-engagement
+      # causally: stay blocked until the cancel press is fully released (debounced) and the user
+      # starts a fresh, deliberate press - which then re-engages immediately.
       if cancel:
-        self.block_pcm_enable_frames = REENGAGE_BLOCK_FRAMES
-      elif self.block_pcm_enable_frames > 0:
-        if scroll_wheel_pressed:
-          self.block_pcm_enable_frames = REENGAGE_BLOCK_FRAMES
-        else:
-          self.block_pcm_enable_frames -= 1
-      if self.block_pcm_enable_frames > 0:
+        self.await_rearm = True
+      if scroll_wheel_pressed:
+        if self.await_rearm and self.released_frames >= REARM_RELEASE_FRAMES:
+          self.await_rearm = False
+        self.released_frames = 0
+      else:
+        self.released_frames += 1
+      if self.await_rearm:
         ret.blockPcmEnable = True
 
       if cancel:
