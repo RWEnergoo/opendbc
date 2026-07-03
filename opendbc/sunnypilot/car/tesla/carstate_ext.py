@@ -22,6 +22,8 @@ class CarStateExt:
 
     self.infotainment_3_finger_press = 0
     self.pre_cancel_prev = False
+    self.scroll_wheel_pressed_prev = False
+    self.cruise_enabled_frames = 0
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -37,14 +39,29 @@ class CarStateExt:
     cp_ap_party = can_parsers[Bus.ap_party]
 
     if self.CP_SP.flags & TeslaFlagsSP.BUTTON_CANCELS:
-      # The DI briefly reports PRE_CANCEL when the user presses the cruise button while engaged.
-      # Stock openpilot treats PRE_CANCEL as engaged and keeps commanding ACC_ON, swallowing the
-      # user's cancel. Surface the rising edge as a cancel button so the press disengages.
+      cancel = False
+
+      # The DI briefly reports PRE_CANCEL when a cancel request reaches it while engaged.
+      # Stock openpilot treats PRE_CANCEL as engaged and keeps commanding ACC_ON, swallowing
+      # the user's cancel. Surface the rising edge as a cancel button so the press disengages.
       cruise_state = self.can_define.dv["DI_state"]["DI_cruiseState"].get(int(cp_party.vl["DI_state"]["DI_cruiseState"]), None)
       pre_cancel = cruise_state == "PRE_CANCEL"
       if pre_cancel and not self.pre_cancel_prev:
-        ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
+        cancel = True
       self.pre_cancel_prev = pre_cancel
+
+      # The scroll wheel click is normally handled by the AP computer, which openpilot replaces,
+      # so the press goes nowhere and no PRE_CANCEL appears. Read the click directly from
+      # UI_warning and treat it as a cancel while engaged. The half-second guard keeps the
+      # engaging click itself (button press -> DI engages) from immediately canceling.
+      scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
+      self.cruise_enabled_frames = self.cruise_enabled_frames + 1 if ret.cruiseState.enabled else 0
+      if scroll_wheel_pressed and not self.scroll_wheel_pressed_prev and self.cruise_enabled_frames > 50:
+        cancel = True
+      self.scroll_wheel_pressed_prev = scroll_wheel_pressed
+
+      if cancel:
+        ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
 
     speed_units = self.can_define.dv["DI_state"]["DI_speedUnits"].get(int(cp_party.vl["DI_state"]["DI_speedUnits"]), None)
     speed_limit = cp_ap_party.vl["DAS_status"]["DAS_fusedSpeedLimit"]
