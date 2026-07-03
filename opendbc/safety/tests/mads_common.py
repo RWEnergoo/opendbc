@@ -375,14 +375,17 @@ class MadsSafetyTestBase(unittest.TestCase):
 
   def test_steering_disengage_no_resume_without_pause(self):
     """Without the steering override pause flag, lateral stays disengaged after the override is released"""
-    self.safety.mads_apply_alternative_experience(ALTERNATIVE_EXPERIENCE.ENABLE_MADS)
-    self.safety.set_controls_allowed_lateral(True)
+    # the extra low bit guards the exact ALT_EXP_MADS_STEER_OVERRIDE_PAUSE_LATERAL bit match
+    for mode in (ALTERNATIVE_EXPERIENCE.ENABLE_MADS, ALTERNATIVE_EXPERIENCE.ENABLE_MADS | 1):
+      with self.subTest(mode=mode):
+        self.safety.mads_apply_alternative_experience(mode)
+        self.safety.set_controls_allowed_lateral(True)
 
-    self.safety.tick_mads_state(False, False, False, False, True)
-    self.assertFalse(self.safety.get_controls_allowed_lateral())
+        self.safety.tick_mads_state(False, False, False, False, True)
+        self.assertFalse(self.safety.get_controls_allowed_lateral())
 
-    self.safety.tick_mads_state(False, False, False, False, False)
-    self.assertFalse(self.safety.get_controls_allowed_lateral())
+        self.safety.tick_mads_state(False, False, False, False, False)
+        self.assertFalse(self.safety.get_controls_allowed_lateral())
 
   def test_disengage_on_brake(self):
     for disengage_on_brake in (True, False):
