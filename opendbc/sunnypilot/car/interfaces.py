@@ -18,7 +18,7 @@ from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_trac
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
-from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 
@@ -131,6 +131,10 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
 
     if int(params_dict.get("TeslaSoftBrakeAfterGas", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.SOFT_BRAKE_AFTER_GAS.value
+
+    if int(params_dict.get("TeslaSoftGasThreshold", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.SOFT_GAS_THRESHOLD.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD
 
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,

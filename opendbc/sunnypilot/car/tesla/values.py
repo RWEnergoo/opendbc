@@ -19,7 +19,9 @@ class TeslaFlagsSP(IntFlag):
   BUTTON_CANCEL_HOLD_BIT0 = 64
   BUTTON_CANCEL_HOLD_BIT1 = 128
   SOFT_BRAKE_AFTER_GAS = 256  # jerk-limited braking resume after a gas pedal override
+  SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 10%) does not count as gas pressed
 
 
 class TeslaSafetyFlagsSP:
   HAS_VEHICLE_BUS = 1
+  SOFT_GAS_THRESHOLD = 2

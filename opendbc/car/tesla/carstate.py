@@ -8,6 +8,7 @@ from opendbc.car.tesla.teslacan import get_steer_ctrl_type
 from opendbc.car.tesla.values import DBC, CANBUS, GEAR_MAP, STEER_THRESHOLD, TeslaFlags
 
 from opendbc.sunnypilot.car.tesla.carstate_ext import CarStateExt
+from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
@@ -48,7 +49,10 @@ class CarState(CarStateBase, CarStateExt):
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
 
     # Gas pedal
-    ret.gasPressed = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"] > 0
+    # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 10%) does not count as
+    # pressed so gentle braking may continue, matching stock TACC. Must match safety tesla.h.
+    gas_threshold = 10.0 if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD else 0.0
+    ret.gasPressed = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"] > gas_threshold
 
     # Brake pedal
     ret.brakePressed = cp_party.vl["ESP_status"]["ESP_driverBrakeApply"] == 2

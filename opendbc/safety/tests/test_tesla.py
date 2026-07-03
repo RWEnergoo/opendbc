@@ -233,6 +233,19 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
           self.assertFalse(self.safety.get_steering_disengage_prev())
 
+  def test_soft_gas_threshold(self):
+    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 10% doesn't count as pressed
+    prev_sp = self.safety.get_current_safety_param_sp()
+    self.safety.set_current_safety_param_sp(prev_sp | TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
+    try:
+      for gas, pressed in ((0, False), (5, False), (10, False), (10.4, True), (25, True), (100, True)):
+        self.assertTrue(self._rx(self._user_gas_msg(gas)))
+        self.assertEqual(pressed, self.safety.get_gas_pressed_prev(), f"gas={gas}")
+    finally:
+      self.safety.set_current_safety_param_sp(prev_sp)
+      self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
+
   def test_steering_wheel_disengage_with_override_pause(self):
     # sunnypilot: with MADS_STEER_OVERRIDE_PAUSE_LATERAL, a hard steering override does not
     # drop longitudinal controls_allowed (lateral is handled separately by MADS)
