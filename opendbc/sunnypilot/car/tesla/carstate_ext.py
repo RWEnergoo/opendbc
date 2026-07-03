@@ -14,6 +14,9 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
+CANCEL_HOLD_FRAMES = 100  # 1s at 100Hz: hold the scroll wheel click to cancel
+REENGAGE_BLOCK_FRAMES = 200  # 2s: block the car's click-release re-engage after a cancel
+
 
 class CarStateExt:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
@@ -22,8 +25,10 @@ class CarStateExt:
 
     self.infotainment_3_finger_press = 0
     self.pre_cancel_prev = False
-    self.scroll_wheel_pressed_prev = False
+    self.scroll_pressed_frames = 0
     self.cruise_enabled_frames = 0
+    self.cancel_sent = False
+    self.block_pcm_enable_frames = 0
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -51,14 +56,32 @@ class CarStateExt:
       self.pre_cancel_prev = pre_cancel
 
       # The scroll wheel click is normally handled by the AP computer, which openpilot replaces,
-      # so the press goes nowhere and no PRE_CANCEL appears. Read the click directly from
-      # UI_warning and treat it as a cancel while engaged. The half-second guard keeps the
-      # engaging click itself (button press -> DI engages) from immediately canceling.
+      # so the press goes nowhere and no PRE_CANCEL appears. Read it directly from UI_warning.
+      # Road testing (2026-07-03) showed scrollWheelPressed also fires on scroll ticks and on the
+      # left (volume) wheel, so require a deliberate 1-second HOLD to cancel. The engaged guard
+      # keeps the engaging click itself from canceling.
       scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
       self.cruise_enabled_frames = self.cruise_enabled_frames + 1 if ret.cruiseState.enabled else 0
-      if scroll_wheel_pressed and not self.scroll_wheel_pressed_prev and self.cruise_enabled_frames > 50:
+      self.scroll_pressed_frames = self.scroll_pressed_frames + 1 if scroll_wheel_pressed else 0
+      if not scroll_wheel_pressed:
+        self.cancel_sent = False
+
+      if self.scroll_pressed_frames >= CANCEL_HOLD_FRAMES and not self.cancel_sent and self.cruise_enabled_frames > 50:
         cancel = True
-      self.scroll_wheel_pressed_prev = scroll_wheel_pressed
+        self.cancel_sent = True
+
+      # The car itself treats the completed click (on release) as an engage command, which would
+      # bounce everything straight back on. Block PCM re-engagement for a short window after a
+      # cancel; the window starts counting down once the button is released.
+      if cancel:
+        self.block_pcm_enable_frames = REENGAGE_BLOCK_FRAMES
+      elif self.block_pcm_enable_frames > 0:
+        if scroll_wheel_pressed:
+          self.block_pcm_enable_frames = REENGAGE_BLOCK_FRAMES
+        else:
+          self.block_pcm_enable_frames -= 1
+      if self.block_pcm_enable_frames > 0:
+        ret.blockPcmEnable = True
 
       if cancel:
         ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
