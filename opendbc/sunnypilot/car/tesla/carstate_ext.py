@@ -15,8 +15,10 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 ButtonType = structs.CarState.ButtonEvent.Type
 
 # Hold the scroll wheel click this long to cancel, indexed by the 2-bit
-# BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param)
-BUTTON_CANCEL_HOLD_DURATIONS = [0.5, 1.0, 1.5, 2.0]  # seconds, at 100Hz frames
+# BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param).
+# 0.01 = instant: a plain click cancels (engaged state is known, so a hold is only
+# needed to mask other interactions sharing the click bit, e.g. the volume-wheel click)
+BUTTON_CANCEL_HOLD_DURATIONS = [0.01, 0.5, 1.0, 2.0]  # seconds, at 100Hz frames
 REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
