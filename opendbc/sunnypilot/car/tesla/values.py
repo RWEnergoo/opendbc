@@ -18,6 +18,7 @@ class TeslaFlagsSP(IntFlag):
   # 2-bit index into BUTTON_CANCEL_HOLD_DURATIONS, see carstate_ext.py
   BUTTON_CANCEL_HOLD_BIT0 = 64
   BUTTON_CANCEL_HOLD_BIT1 = 128
+  SOFT_BRAKE_AFTER_GAS = 256  # jerk-limited braking resume after a gas pedal override
 
 
 class TeslaSafetyFlagsSP:

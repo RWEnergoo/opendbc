@@ -8,8 +8,11 @@ from opendbc.car import structs
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 # Delay after the driver releases a hard override before steering resumes, indexed
-# by the 2-bit STEER_OVERRIDE_RESUME_DELAY flag value (TeslaSteerOverrideResumeDelay param)
-STEER_OVERRIDE_RESUME_DELAYS = [0.5, 1.0, 1.5, 2.0]  # seconds
+# by the 2-bit STEER_OVERRIDE_RESUME_DELAY flag value (TeslaSteerOverrideResumeDelay param).
+# The real resume conditions are the released grip and the small angle delta; the delay
+# only debounces them. 0.25s is near-immediate: bring the wheel back to where openpilot
+# wants it, relax your grip, and steering takes over.
+STEER_OVERRIDE_RESUME_DELAYS = [0.25, 0.5, 1.0, 2.0]  # seconds
 
 # Don't resume while the requested angle is far from the actual angle, so steering
 # doesn't snap back mid-correction (e.g. while the driver is still in a curve)

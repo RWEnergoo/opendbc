@@ -129,6 +129,9 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if cancel_hold_idx & 2:
       CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1.value
 
+    if int(params_dict.get("TeslaSoftBrakeAfterGas", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.SOFT_BRAKE_AFTER_GAS.value
+
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                              can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:
