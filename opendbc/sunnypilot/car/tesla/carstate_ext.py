@@ -16,9 +16,13 @@ ButtonType = structs.CarState.ButtonEvent.Type
 
 # Hold the scroll wheel click this long to cancel, indexed by the 2-bit
 # BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param).
-# 0.01 = instant: a plain click cancels (engaged state is known, so a hold is only
-# needed to mask other interactions sharing the click bit, e.g. the volume-wheel click)
-BUTTON_CANCEL_HOLD_DURATIONS = [0.01, 0.5, 1.0, 2.0]  # seconds, at 100Hz frames
+# Protocol test (route 00000009--399b5802f2) proved scrollWheelPressed is the ONLY
+# wheel signal on the accessible buses and fires on BOTH wheels for clicks (100-200ms
+# pulses), every scroll tick (~100ms pulses) and holds (continuous). An instant/click
+# trigger is therefore unsafe (every scroll tick would cancel); >= 0.5s continuous
+# hold is inherently scroll- and short-click-proof. Only a long LEFT-wheel hold
+# (chill mode gesture) remains indistinguishable from a cancel hold.
+BUTTON_CANCEL_HOLD_DURATIONS = [0.5, 1.0, 1.5, 2.0]  # seconds, at 100Hz frames
 REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
