@@ -129,9 +129,6 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if cancel_hold_idx & 2:
       CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1.value
 
-    if int(params_dict.get("TeslaSoftBrakeAfterGas", 0)) == 1:
-      CP_SP.flags |= TeslaFlagsSP.SOFT_BRAKE_AFTER_GAS.value
-
     if int(params_dict.get("TeslaSoftGasThreshold", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.SOFT_GAS_THRESHOLD.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD

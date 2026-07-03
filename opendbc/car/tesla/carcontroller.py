@@ -7,7 +7,7 @@ from opendbc.car.tesla.teslacan import TeslaCAN
 from opendbc.car.tesla.values import CarControllerParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
-from opendbc.sunnypilot.car.tesla.gas_resume_ramp import GasBrakeBlend, GasResumeRamp
+from opendbc.sunnypilot.car.tesla.gas_brake_blend import GasBrakeBlend
 from opendbc.sunnypilot.car.tesla.steer_override_pause import SteerOverridePause
 
 
@@ -26,7 +26,6 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     self.packer = CANPacker(dbc_names[Bus.party])
     self.tesla_can = TeslaCAN(CP, self.packer)
     self.steer_override_pause = SteerOverridePause(CP_SP)
-    self.gas_resume_ramp = GasResumeRamp(CP_SP)
     self.gas_brake_blend = GasBrakeBlend(CP_SP)
 
     # Vehicle model used for lateral limiting
@@ -60,7 +59,6 @@ class CarController(CarControllerBase, CoopSteeringCarController):
         state = 13 if CC.cruiseControl.cancel else 4  # 4=ACC_ON, 13=ACC_CANCEL_GENERIC_SILENT
         accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
         accel = self.gas_brake_blend.update(accel, CC.longActive, CS.accel_pedal_pos)
-        accel = self.gas_resume_ramp.update(accel, CC.longActive, CS.out.gasPressed)
         cntr = (self.frame // 4) % 8
         can_sends.append(self.tesla_can.create_longitudinal_command(state, accel, cntr, CS.out.vEgo, CC.longActive))
 
