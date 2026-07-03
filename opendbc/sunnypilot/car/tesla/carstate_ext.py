@@ -14,8 +14,10 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
-CANCEL_HOLD_FRAMES = 100  # 1s at 100Hz: hold the scroll wheel click to cancel
-REENGAGE_BLOCK_FRAMES = 200  # 2s: block the car's click-release re-engage after a cancel
+# Hold the scroll wheel click this long to cancel, indexed by the 2-bit
+# BUTTON_CANCEL_HOLD flag value (TeslaButtonCancelHoldDuration param)
+BUTTON_CANCEL_HOLD_DURATIONS = [0.5, 1.0, 1.5, 2.0]  # seconds, at 100Hz frames
+REENGAGE_BLOCK_FRAMES = 200  # 2s: block the car's click re-engage after a cancel
 
 
 class CarStateExt:
@@ -29,6 +31,11 @@ class CarStateExt:
     self.cruise_enabled_frames = 0
     self.cancel_sent = False
     self.block_pcm_enable_frames = 0
+    self.press_started_engaged = False
+
+    hold_idx = (1 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT0 else 0) + \
+               (2 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1 else 0)
+    self.cancel_hold_frames = int(BUTTON_CANCEL_HOLD_DURATIONS[hold_idx] * 100)
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -65,8 +72,12 @@ class CarStateExt:
       self.scroll_pressed_frames = self.scroll_pressed_frames + 1 if scroll_wheel_pressed else 0
       if not scroll_wheel_pressed:
         self.cancel_sent = False
+      elif self.scroll_pressed_frames == 1:
+        # only a press that STARTED while engaged may cancel, so holding the
+        # engaging click itself never bounces back off (matters at short hold settings)
+        self.press_started_engaged = self.cruise_enabled_frames > 50
 
-      if self.scroll_pressed_frames >= CANCEL_HOLD_FRAMES and not self.cancel_sent and self.cruise_enabled_frames > 50:
+      if self.scroll_pressed_frames >= self.cancel_hold_frames and not self.cancel_sent and self.press_started_engaged:
         cancel = True
         self.cancel_sent = True
 
