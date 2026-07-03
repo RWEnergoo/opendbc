@@ -14,6 +14,7 @@ from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety, MAX_SPEED_DELTA, MAX_WRONG_COUNTERS, away_round, round_speed
 
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 
 MSG_DAS_steeringControl = 0x488
@@ -231,6 +232,23 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=0, eac_status=1, eac_error_code=0)))
           self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
           self.assertFalse(self.safety.get_steering_disengage_prev())
+
+  def test_steering_wheel_disengage_with_override_pause(self):
+    # sunnypilot: with MADS_STEER_OVERRIDE_PAUSE_LATERAL, a hard steering override does not
+    # drop longitudinal controls_allowed (lateral is handled separately by MADS)
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.MADS_STEER_OVERRIDE_PAUSE_LATERAL)
+    for hands_on_level, eac_status, eac_error_code in ((3, 1, 0), (0, 0, 9)):
+      self.safety.set_controls_allowed(True)
+
+      self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=hands_on_level, eac_status=eac_status,
+                                                    eac_error_code=eac_error_code)))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self.assertTrue(self.safety.get_steering_disengage_prev())
+
+      self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=0, eac_status=1, eac_error_code=0)))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self.assertFalse(self.safety.get_steering_disengage_prev())
+    self.safety.set_alternative_experience(0)
 
   def test_autopark_summon_while_enabled(self):
     # We should not respect Autopark that activates while controls are allowed

@@ -111,6 +111,18 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if coop_steering:
       CP_SP.flags |= TeslaFlagsSP.COOP_STEERING.value
 
+    if int(params_dict.get("TeslaButtonCancels", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCELS.value
+
+    if int(params_dict.get("TeslaSteerOverridePauses", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_PAUSES.value
+
+    resume_delay_idx = min(max(int(params_dict.get("TeslaSteerOverrideResumeDelay", 1)), 0), 3)
+    if resume_delay_idx & 1:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_RESUME_DELAY_BIT0.value
+    if resume_delay_idx & 2:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_RESUME_DELAY_BIT1.value
+
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                              can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:

@@ -7,6 +7,7 @@ from opendbc.car.tesla.teslacan import TeslaCAN
 from opendbc.car.tesla.values import CarControllerParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
+from opendbc.sunnypilot.car.tesla.steer_override_pause import SteerOverridePause
 
 
 def get_safety_CP():
@@ -23,6 +24,7 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     self.apply_angle_last = 0
     self.packer = CANPacker(dbc_names[Bus.party])
     self.tesla_can = TeslaCAN(CP, self.packer)
+    self.steer_override_pause = SteerOverridePause(CP_SP)
 
     # Vehicle model used for lateral limiting
     self.VM = VehicleModel(get_safety_CP())
@@ -36,6 +38,8 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # When enabling in a tight curve, we wait until user reduces steering force to start steering.
     # Canceling is done on rising edge and is handled generically with CC.cruiseControl.cancel
     lat_active = CC.latActive and CS.hands_on_level < 3
+    lat_active = self.steer_override_pause.update(lat_active, CC.latActive, CS.hands_on_level, CS.out.steeringPressed,
+                                                  actuators.steeringAngleDeg, CS.out.steeringAngleDeg)
 
     if self.frame % 2 == 0:
       # Angular rate limit based on speed

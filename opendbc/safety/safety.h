@@ -363,8 +363,12 @@ static void generic_rx_checks(void) {
   regen_braking_prev = regen_braking;
 
   // exit controls on rising edge of steering override/disengage
+  // sunnypilot: with MADS steering override pause, lateral is handled separately by MADS
+  // and longitudinal keeps running through a steering override (stock Tesla TACC-like behavior)
   if (steering_disengage && !steering_disengage_prev) {
-    controls_allowed = false;
+    if ((alternative_experience & ALT_EXP_MADS_STEER_OVERRIDE_PAUSE_LATERAL) == 0) {
+      controls_allowed = false;
+    }
   }
   steering_disengage_prev = steering_disengage;
 }

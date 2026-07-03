@@ -2,6 +2,7 @@ from opendbc.testing import parameterized
 import abc
 import unittest
 
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.safety.tests.libsafety import libsafety_py
 
 
@@ -352,6 +353,35 @@ class MadsSafetyTestBase(unittest.TestCase):
 
     self.safety.set_steering_disengage(True)
     self._rx(self._speed_msg(0))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_steering_disengage_pause_and_resume(self):
+    """With ALT_EXP_MADS_STEER_OVERRIDE_PAUSE_LATERAL, lateral pauses during a steering
+    disengage and is re-allowed once the override is released"""
+    self.safety.mads_apply_alternative_experience(ALTERNATIVE_EXPERIENCE.ENABLE_MADS |
+                                                  ALTERNATIVE_EXPERIENCE.MADS_STEER_OVERRIDE_PAUSE_LATERAL)
+    self.safety.set_controls_allowed_lateral(True)
+
+    self.safety.tick_mads_state(False, False, False, False, True)
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+    # held while the override continues
+    self.safety.tick_mads_state(False, False, False, False, True)
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+    # resumes on release of the override
+    self.safety.tick_mads_state(False, False, False, False, False)
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+  def test_steering_disengage_no_resume_without_pause(self):
+    """Without the steering override pause flag, lateral stays disengaged after the override is released"""
+    self.safety.mads_apply_alternative_experience(ALTERNATIVE_EXPERIENCE.ENABLE_MADS)
+    self.safety.set_controls_allowed_lateral(True)
+
+    self.safety.tick_mads_state(False, False, False, False, True)
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+    self.safety.tick_mads_state(False, False, False, False, False)
     self.assertFalse(self.safety.get_controls_allowed_lateral())
 
   def test_disengage_on_brake(self):

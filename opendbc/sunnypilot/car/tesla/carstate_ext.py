@@ -21,6 +21,7 @@ class CarStateExt:
     self.CP_SP = CP_SP
 
     self.infotainment_3_finger_press = 0
+    self.pre_cancel_prev = False
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -34,6 +35,16 @@ class CarStateExt:
 
     cp_party = can_parsers[Bus.party]
     cp_ap_party = can_parsers[Bus.ap_party]
+
+    if self.CP_SP.flags & TeslaFlagsSP.BUTTON_CANCELS:
+      # The DI briefly reports PRE_CANCEL when the user presses the cruise button while engaged.
+      # Stock openpilot treats PRE_CANCEL as engaged and keeps commanding ACC_ON, swallowing the
+      # user's cancel. Surface the rising edge as a cancel button so the press disengages.
+      cruise_state = self.can_define.dv["DI_state"]["DI_cruiseState"].get(int(cp_party.vl["DI_state"]["DI_cruiseState"]), None)
+      pre_cancel = cruise_state == "PRE_CANCEL"
+      if pre_cancel and not self.pre_cancel_prev:
+        ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
+      self.pre_cancel_prev = pre_cancel
 
     speed_units = self.can_define.dv["DI_state"]["DI_speedUnits"].get(int(cp_party.vl["DI_state"]["DI_speedUnits"]), None)
     speed_limit = cp_ap_party.vl["DAS_status"]["DAS_fusedSpeedLimit"]
