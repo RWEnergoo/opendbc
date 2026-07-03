@@ -27,6 +27,7 @@ class CarState(CarStateBase, CarStateExt):
     self.suspected_fsd14 = False
 
     self.hands_on_level = 0
+    self.accel_pedal_pos = 0.0
     self.das_control = None
 
   def update_autopark_state(self, autopark_state: str, cruise_enabled: bool):
@@ -52,7 +53,8 @@ class CarState(CarStateBase, CarStateExt):
     # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 10%) does not count as
     # pressed so gentle braking may continue, matching stock TACC. Must match safety tesla.h.
     gas_threshold = 10.0 if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD else 0.0
-    ret.gasPressed = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"] > gas_threshold
+    self.accel_pedal_pos = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"]  # %, for GasBrakeBlend
+    ret.gasPressed = self.accel_pedal_pos > gas_threshold
 
     # Brake pedal
     ret.brakePressed = cp_party.vl["ESP_status"]["ESP_driverBrakeApply"] == 2

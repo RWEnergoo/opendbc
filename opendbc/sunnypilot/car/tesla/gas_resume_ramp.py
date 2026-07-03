@@ -14,6 +14,24 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 GAS_RESUME_JERK = 2.0  # m/s^3, max increase in braking after gas release
 DT_LONG = 0.04  # longitudinal command interval (every 4th 100Hz frame)
 
+# Pedal window of the SOFT_GAS_THRESHOLD feature, must match carstate.py and safety tesla.h
+SOFT_GAS_MAX_PEDAL = 10.0  # %
+
+
+class GasBrakeBlend:
+  """Stock-TACC-like blending within the soft gas window: braking force scales down
+  linearly with pedal position (5% pedal -> 50% of planned braking, 10% -> none)."""
+
+  def __init__(self, CP_SP: structs.CarParamsSP):
+    self.enabled = bool(CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD)
+
+  def update(self, accel: float, long_active: bool, accel_pedal_pos: float) -> float:
+    if not self.enabled or not long_active or accel >= 0.0:
+      return accel
+
+    scale = 1.0 - min(max(accel_pedal_pos / SOFT_GAS_MAX_PEDAL, 0.0), 1.0)
+    return accel * scale
+
 
 class GasResumeRamp:
   def __init__(self, CP_SP: structs.CarParamsSP):
