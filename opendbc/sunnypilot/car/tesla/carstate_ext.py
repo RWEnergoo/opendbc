@@ -43,6 +43,7 @@ class CarStateExt:
     self.cruise_enabled_frames = 0
     self.cancel_sent = False
     self.rearm_state = 0  # 0 = re-engagement allowed, 1 = awaiting full release, 2 = awaiting fresh press
+    self.button_cancel_rearm = False  # carcontroller sends a standing silent cancel while set
     self.released_frames = 0
     self.press_started_engaged = False
 
@@ -124,6 +125,9 @@ class CarStateExt:
           self.rearm_state = 2
       if self.rearm_state != 0:
         ret.blockPcmEnable = True
+      # While rearming, the carcontroller sends a standing ACC_CANCEL_GENERIC_SILENT instead of
+      # ACC_ON, so the DI never completes the click-tail engage - no engage/disengage chime
+      self.button_cancel_rearm = self.rearm_state != 0
 
       if cancel:
         ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]

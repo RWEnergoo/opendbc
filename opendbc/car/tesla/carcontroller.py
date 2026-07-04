@@ -56,7 +56,9 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # Longitudinal control
     if self.CP.openpilotLongitudinalControl:
       if self.frame % 4 == 0:
-        state = 13 if CC.cruiseControl.cancel else 4  # 4=ACC_ON, 13=ACC_CANCEL_GENERIC_SILENT
+        # 4=ACC_ON, 13=ACC_CANCEL_GENERIC_SILENT. The standing cancel during the button rearm
+        # window keeps the DI from completing the cancel click's tail engage (silently)
+        state = 13 if (CC.cruiseControl.cancel or CS.button_cancel_rearm) else 4
         accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
         accel = self.gas_brake_blend.update(accel, CC.longActive, CS.accel_pedal_pos)
         cntr = (self.frame // 4) % 8
