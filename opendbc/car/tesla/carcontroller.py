@@ -40,8 +40,9 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # When enabling in a tight curve, we wait until user reduces steering force to start steering.
     # Canceling is done on rising edge and is handled generically with CC.cruiseControl.cancel
     lat_active = CC.latActive and CS.hands_on_level < 3
-    lat_active = self.steer_override_pause.update(lat_active, CC.latActive, CS.hands_on_level, CS.out.steeringPressed,
-                                                  actuators.steeringAngleDeg, CS.out.steeringAngleDeg)
+    lat_active = self.steer_override_pause.update(lat_active, CC.latActive, CS.hands_on_level, CS.out.steeringDisengage,
+                                                  CS.out.vEgoRaw, actuators.steeringAngleDeg, CS.out.steeringAngleDeg,
+                                                  CS.out.steeringTorque, CS.out.steeringRateDeg)
 
     if self.frame % 2 == 0:
       # Angular rate limit based on speed

@@ -4,27 +4,43 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+import numpy as np
+
 from opendbc.car import structs
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
-# Delay after the driver releases a hard override before steering resumes, indexed
-# by the 2-bit STEER_OVERRIDE_RESUME_DELAY flag value (TeslaSteerOverrideResumeDelay param).
-# The real resume conditions are the released grip and the small angle delta; the delay
-# only debounces them. 0.25s is near-immediate: bring the wheel back to where openpilot
-# wants it, relax your grip, and steering takes over.
+# Base delay after the resume conditions are continuously met before steering resumes,
+# indexed by the 2-bit STEER_OVERRIDE_RESUME_DELAY flag value (TeslaSteerOverrideResumeDelay param)
 STEER_OVERRIDE_RESUME_DELAYS = [0.25, 0.5, 1.0, 2.0]  # seconds
 
-# Don't resume while the requested angle is far from the actual angle, so steering
-# doesn't snap back mid-correction (e.g. while the driver is still in a curve)
-RESUME_MAX_ANGLE_DELTA = 10.0  # degrees
+# Resume conditions (road test route 00000011 showed the v1 conditions caused a violent
+# pause/resume war at 100-500ms intervals while the driver was mid-maneuver):
+# - the wheel must actually be at rest, not mid-motion
+RESUME_MAX_WHEEL_RATE = 15.0  # deg/s
+# - the driver's grip must be genuinely released (raw torsion torque, not the filtered flag)
+RESUME_MAX_TORQUE = 0.8  # Nm
+# - the requested angle must be close to the actual angle, scaled with speed: 10 deg at
+#   parking speed is harmless, at highway speed it is a violent snap
+RESUME_ANGLE_DELTA_BP = [0.0, 3.0, 10.0, 20.0, 30.0]  # m/s
+RESUME_ANGLE_DELTA_V = [20.0, 12.0, 6.0, 3.0, 1.5]  # deg
+
+# A firm sustained grip (handsOnLevel 2) pauses too, so the EPS stops fighting the driver
+# with full force long before the hard hands-on-3 threshold
+PAUSE_FIRM_GRIP_FRAMES = 30  # 0.3s at 100Hz
+
+# If steering resumes and the driver immediately overrides again, the resume was premature:
+# back off exponentially instead of fighting at 10Hz
+BACKOFF_WINDOW_FRAMES = 300   # re-override within 3s of a resume doubles the required quiet time
+BACKOFF_MAX_MULT = 8
+BACKOFF_RESET_FRAMES = 1000   # 10s without any override resets the backoff
 
 DT_CTRL = 0.01  # carcontroller runs at 100Hz
 
 
 class SteerOverridePause:
-  """Pauses lateral actuation after a hard steering override (EPAS3S_handsOnLevel >= 3)
-  and resumes it once the driver has relaxed their grip for a configurable delay and
-  the commanded angle is close to the current angle."""
+  """Pauses lateral actuation on a driver steering override and resumes it only once the
+  wheel is at rest, the grip is released, and the requested angle is close - so steering
+  hands back exactly when the driver has put the wheel where openpilot wants it."""
 
   def __init__(self, CP_SP: structs.CarParamsSP):
     self.enabled = bool(CP_SP.flags & TeslaFlagsSP.STEER_OVERRIDE_PAUSES)
@@ -35,9 +51,14 @@ class SteerOverridePause:
 
     self.paused = False
     self.resume_timer = 0
+    self.firm_grip_frames = 0
+    self.backoff_mult = 1
+    self.frames_since_resume = BACKOFF_WINDOW_FRAMES
+    self.frames_since_override = BACKOFF_RESET_FRAMES
 
-  def update(self, lat_active: bool, latActive: bool, hands_on_level: int, steering_pressed: bool,
-             desired_angle: float, actual_angle: float) -> bool:
+  def update(self, lat_active: bool, latActive: bool, hands_on_level: int, steering_disengage: bool,
+             v_ego: float, desired_angle: float, actual_angle: float,
+             steering_torque: float, steering_rate: float) -> bool:
     if not self.enabled:
       return lat_active
 
@@ -45,21 +66,41 @@ class SteerOverridePause:
       # openpilot lateral is fully off (disengaged or MADS paused elsewhere): reset
       self.paused = False
       self.resume_timer = 0
+      self.firm_grip_frames = 0
+      self.backoff_mult = 1
       return lat_active
 
-    if hands_on_level >= 3:
+    self.firm_grip_frames = self.firm_grip_frames + 1 if hands_on_level >= 2 else 0
+    override = hands_on_level >= 3 or steering_disengage or self.firm_grip_frames >= PAUSE_FIRM_GRIP_FRAMES
+
+    if override:
+      if not self.paused and self.frames_since_resume < BACKOFF_WINDOW_FRAMES:
+        # the previous resume was premature: require a longer quiet period next time
+        self.backoff_mult = min(self.backoff_mult * 2, BACKOFF_MAX_MULT)
       self.paused = True
       self.resume_timer = 0
-    elif self.paused:
-      relaxed = not steering_pressed
-      angle_ok = abs(desired_angle - actual_angle) < RESUME_MAX_ANGLE_DELTA
-      if relaxed and angle_ok:
-        self.resume_timer += 1
-      else:
-        self.resume_timer = 0
+      self.frames_since_override = 0
+    else:
+      self.frames_since_override += 1
+      if self.frames_since_override >= BACKOFF_RESET_FRAMES:
+        self.backoff_mult = 1
 
-      if self.resume_timer >= self.resume_delay_frames:
-        self.paused = False
-        self.resume_timer = 0
+      if self.paused:
+        grip_released = hands_on_level <= 1 and abs(steering_torque) < RESUME_MAX_TORQUE
+        wheel_at_rest = abs(steering_rate) < RESUME_MAX_WHEEL_RATE
+        angle_ok = abs(desired_angle - actual_angle) < float(np.interp(v_ego, RESUME_ANGLE_DELTA_BP, RESUME_ANGLE_DELTA_V))
+
+        if grip_released and wheel_at_rest and angle_ok:
+          self.resume_timer += 1
+        else:
+          self.resume_timer = 0
+
+        if self.resume_timer >= self.resume_delay_frames * self.backoff_mult:
+          self.paused = False
+          self.resume_timer = 0
+          self.frames_since_resume = 0
+
+    if not self.paused:
+      self.frames_since_resume += 1
 
     return lat_active and not self.paused
