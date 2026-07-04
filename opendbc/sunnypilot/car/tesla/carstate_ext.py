@@ -27,6 +27,10 @@ ButtonType = structs.CarState.ButtonEvent.Type
 #   short-click-proof; only a long left-wheel hold remains indistinguishable.
 INSTANT_HOLD_FRAMES = 1
 FALLBACK_HOLD_FRAMES = 50  # 0.5s at 100Hz
+# Runtime failover: if VCLEFT_switchStatus stops arriving mid-drive (harness/bus fault),
+# fall back to the shared UI_warning bit within 1s so the button always keeps working -
+# without the button, lateral could otherwise not be switched off at all
+SWC_STALE_FRAMES = 100  # 1s at 100Hz
 # Holding the button this long disengages EVERYTHING regardless of state - the "all off"
 # escape for lateral-only mode (e.g. arriving home with MADS steering still active)
 ALL_OFF_HOLD_FRAMES = 150  # 1.5s at 100Hz
@@ -48,8 +52,10 @@ class CarStateExt:
     self.released_frames = 0
     self.press_started_engaged = False
 
-    self.cancel_hold_frames = INSTANT_HOLD_FRAMES if CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS else FALLBACK_HOLD_FRAMES
+    self.has_vehicle_bus = bool(CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS)
     self.right_pressed = False
+    self.swc_ts_prev = 0
+    self.swc_stale_frames = SWC_STALE_FRAMES
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
@@ -62,9 +68,16 @@ class CarStateExt:
                                                 {3: ButtonType.lkas})]
 
       # VCLEFT_switchStatus is multiplexed and the parser ignores the mux, so only
-      # read the per-wheel switch signals from index-1 frames
-      if int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]) == 1:
-        self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
+      # read the per-wheel switch signals from index-1 frames. Track freshness via
+      # ts_nanos so a mid-drive bus dropout is detected (vl holds stale values forever).
+      swc_ts = cp_adas.ts_nanos["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]
+      if swc_ts != self.swc_ts_prev:
+        self.swc_ts_prev = swc_ts
+        self.swc_stale_frames = 0
+        if int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]) == 1:
+          self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
+      elif self.swc_stale_frames < SWC_STALE_FRAMES:
+        self.swc_stale_frames += 1
 
     cp_party = can_parsers[Bus.party]
     cp_ap_party = can_parsers[Bus.ap_party]
@@ -83,12 +96,16 @@ class CarStateExt:
 
       # The wheel click is normally handled by the AP computer, which openpilot replaces, so the
       # press goes nowhere and no PRE_CANCEL appears. Read it from the bus ourselves: preferably
-      # the right-wheel-specific press on the vehicle bus, otherwise the shared UI_warning bit
-      # (both wheels + scroll ticks; see the trigger notes at the top of this file).
-      if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
+      # the right-wheel-specific press on the vehicle bus (instant click), with the shared
+      # UI_warning bit (both wheels + scroll ticks, 0.5s hold) as fallback - selected at runtime
+      # so a mid-drive vehicle bus dropout fails over within a second.
+      vehicle_bus_fresh = self.has_vehicle_bus and self.swc_stale_frames < SWC_STALE_FRAMES
+      if vehicle_bus_fresh:
         scroll_wheel_pressed = self.right_pressed
+        cancel_hold_frames = INSTANT_HOLD_FRAMES
       else:
         scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
+        cancel_hold_frames = FALLBACK_HOLD_FRAMES
       self.cruise_enabled_frames = self.cruise_enabled_frames + 1 if ret.cruiseState.enabled else 0
       self.scroll_pressed_frames = self.scroll_pressed_frames + 1 if scroll_wheel_pressed else 0
       if not scroll_wheel_pressed:
@@ -98,7 +115,7 @@ class CarStateExt:
         # engaging click itself never bounces back off (matters at short hold settings)
         self.press_started_engaged = self.cruise_enabled_frames > 50
 
-      if self.scroll_pressed_frames >= self.cancel_hold_frames and not self.cancel_sent and self.press_started_engaged:
+      if self.scroll_pressed_frames >= cancel_hold_frames and not self.cancel_sent and self.press_started_engaged:
         cancel = True
         self.cancel_sent = True
 
