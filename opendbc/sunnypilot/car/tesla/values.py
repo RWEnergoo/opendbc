@@ -16,6 +16,7 @@ class TeslaFlagsSP(IntFlag):
   STEER_OVERRIDE_RESUME_DELAY_BIT0 = 16
   STEER_OVERRIDE_RESUME_DELAY_BIT1 = 32
   SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 10%) does not count as gas pressed; braking blends with pedal
+  SIM_VEHICLE_BUS_LOSS = 1024  # dev/test: starve the button trigger's vehicle bus reads to exercise the failover path
 
 
 class TeslaSafetyFlagsSP:

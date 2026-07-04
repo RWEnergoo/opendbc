@@ -70,7 +70,10 @@ class CarStateExt:
       # VCLEFT_switchStatus is multiplexed and the parser ignores the mux, so only
       # read the per-wheel switch signals from index-1 frames. Track freshness via
       # ts_nanos so a mid-drive bus dropout is detected (vl holds stale values forever).
+      # SIM_VEHICLE_BUS_LOSS starves these reads so the genuine failover path runs.
       swc_ts = cp_adas.ts_nanos["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]
+      if self.CP_SP.flags & TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS:
+        swc_ts = self.swc_ts_prev
       if swc_ts != self.swc_ts_prev:
         self.swc_ts_prev = swc_ts
         self.swc_stale_frames = 0

@@ -127,6 +127,9 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
       CP_SP.flags |= TeslaFlagsSP.SOFT_GAS_THRESHOLD.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD
 
+    if int(params_dict.get("TeslaSimVehicleBusLoss", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS.value
+
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                              can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:
