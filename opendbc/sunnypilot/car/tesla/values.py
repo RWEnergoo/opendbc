@@ -15,9 +15,6 @@ class TeslaFlagsSP(IntFlag):
   # 2-bit index into STEER_OVERRIDE_RESUME_DELAYS, see steer_override_pause.py
   STEER_OVERRIDE_RESUME_DELAY_BIT0 = 16
   STEER_OVERRIDE_RESUME_DELAY_BIT1 = 32
-  # 2-bit index into BUTTON_CANCEL_HOLD_DURATIONS, see carstate_ext.py
-  BUTTON_CANCEL_HOLD_BIT0 = 64
-  BUTTON_CANCEL_HOLD_BIT1 = 128
   SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 10%) does not count as gas pressed; braking blends with pedal
 
 

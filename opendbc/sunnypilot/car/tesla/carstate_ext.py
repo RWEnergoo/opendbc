@@ -14,21 +14,19 @@ from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
-# Hold this long to cancel, indexed by the 2-bit BUTTON_CANCEL_HOLD flag value
-# (TeslaButtonCancelHoldDuration param). 0.01 = Instant (a plain click cancels).
-#
-# Signal findings (protocol test route 00000009--399b5802f2):
+# Cancel trigger behavior is hardware-determined, no user setting (findings from
+# labeled protocol test route 00000009--399b5802f2):
 # - With the VEHICLE bus, VCLEFT_switchStatus carries clean per-wheel signals
 #   (swcRightPressed / swcLeftPressed / per-wheel scroll ticks), so the cancel
-#   trigger uses ONLY the right wheel press: scroll ticks, volume clicks and the
-#   left-wheel chill-mode hold can never cancel. Instant is safe there.
+#   trigger uses ONLY the right wheel press and a plain click cancels instantly:
+#   scroll ticks, volume clicks and the left-wheel chill-mode hold can never cancel.
 # - Without the vehicle bus, the only wheel signal is UI_warning.scrollWheelPressed,
 #   which fires on BOTH wheels for clicks (100-200ms pulses), every scroll tick
-#   (~100ms pulses) and holds. Instant is unsafe there (every scroll tick would
-#   cancel), so it is clamped to 0.5s: a continuous hold is inherently scroll- and
+#   (~100ms pulses) and holds. An instant trigger is unsafe there (every scroll tick
+#   would cancel), so a 0.5s continuous hold is required: inherently scroll- and
 #   short-click-proof; only a long left-wheel hold remains indistinguishable.
-BUTTON_CANCEL_HOLD_DURATIONS = [0.01, 0.5, 1.0, 2.0]  # seconds, at 100Hz frames
-FALLBACK_MIN_HOLD = 0.5  # clamp for the shared-bit path without vehicle bus
+INSTANT_HOLD_FRAMES = 1
+FALLBACK_HOLD_FRAMES = 50  # 0.5s at 100Hz
 REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
@@ -47,12 +45,7 @@ class CarStateExt:
     self.released_frames = 0
     self.press_started_engaged = False
 
-    hold_idx = (1 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT0 else 0) + \
-               (2 if CP_SP.flags & TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1 else 0)
-    hold_duration = BUTTON_CANCEL_HOLD_DURATIONS[hold_idx]
-    if not CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
-      hold_duration = max(hold_duration, FALLBACK_MIN_HOLD)
-    self.cancel_hold_frames = int(hold_duration * 100)
+    self.cancel_hold_frames = INSTANT_HOLD_FRAMES if CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS else FALLBACK_HOLD_FRAMES
     self.right_pressed = False
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:

@@ -123,12 +123,6 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if resume_delay_idx & 2:
       CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_RESUME_DELAY_BIT1.value
 
-    cancel_hold_idx = min(max(int(params_dict.get("TeslaButtonCancelHoldDuration", 1)), 0), 3)
-    if cancel_hold_idx & 1:
-      CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT0.value
-    if cancel_hold_idx & 2:
-      CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCEL_HOLD_BIT1.value
-
     if int(params_dict.get("TeslaSoftGasThreshold", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.SOFT_GAS_THRESHOLD.value
       CP_SP.safetyParam |= TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD
