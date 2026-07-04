@@ -27,6 +27,9 @@ ButtonType = structs.CarState.ButtonEvent.Type
 #   short-click-proof; only a long left-wheel hold remains indistinguishable.
 INSTANT_HOLD_FRAMES = 1
 FALLBACK_HOLD_FRAMES = 50  # 0.5s at 100Hz
+# Holding the button this long disengages EVERYTHING regardless of state - the "all off"
+# escape for lateral-only mode (e.g. arriving home with MADS steering still active)
+ALL_OFF_HOLD_FRAMES = 150  # 1.5s at 100Hz
 REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
@@ -98,6 +101,11 @@ class CarStateExt:
       if self.scroll_pressed_frames >= self.cancel_hold_frames and not self.cancel_sent and self.press_started_engaged:
         cancel = True
         self.cancel_sent = True
+
+      # All-off escape: a long hold cancels unconditionally (also in lateral-only mode,
+      # where a click would engage instead)
+      if self.scroll_pressed_frames == ALL_OFF_HOLD_FRAMES:
+        cancel = True
 
       # The car itself can treat the tail of the cancel click as an engage command, which would
       # bounce everything straight back on. Instead of a timed window, block PCM re-engagement

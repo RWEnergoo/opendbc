@@ -34,6 +34,13 @@ BACKOFF_WINDOW_FRAMES = 300   # re-override within 3s of a resume doubles the re
 BACKOFF_MAX_MULT = 8
 BACKOFF_RESET_FRAMES = 1000   # 10s without any override resets the backoff
 
+# In MADS-lateral-only mode a hard override makes MADS itself pause (latActive drops) and
+# silently re-enable as soon as handsOnLevel dips below 3. Resetting this helper on that
+# brief latActive dip erased the pause and backoff, causing recurring full-force fights in
+# tight low-speed curves (road test route 00000018). Keep state across short dips; only
+# reset after lateral has been off for a sustained period (a real disengage).
+RESET_AFTER_INACTIVE_FRAMES = 500  # 5s
+
 DT_CTRL = 0.01  # carcontroller runs at 100Hz
 
 
@@ -55,6 +62,7 @@ class SteerOverridePause:
     self.backoff_mult = 1
     self.frames_since_resume = BACKOFF_WINDOW_FRAMES
     self.frames_since_override = BACKOFF_RESET_FRAMES
+    self.inactive_frames = 0
 
   def update(self, lat_active: bool, latActive: bool, hands_on_level: int, steering_disengage: bool,
              v_ego: float, desired_angle: float, actual_angle: float,
@@ -63,12 +71,16 @@ class SteerOverridePause:
       return lat_active
 
     if not latActive:
-      # openpilot lateral is fully off (disengaged or MADS paused elsewhere): reset
-      self.paused = False
-      self.resume_timer = 0
-      self.firm_grip_frames = 0
-      self.backoff_mult = 1
+      # keep the pause and backoff across brief dips (MADS pausing/re-enabling on the same
+      # override); only a sustained lateral-off is a real disengage worth resetting for
+      self.inactive_frames += 1
+      if self.inactive_frames >= RESET_AFTER_INACTIVE_FRAMES:
+        self.paused = False
+        self.resume_timer = 0
+        self.firm_grip_frames = 0
+        self.backoff_mult = 1
       return lat_active
+    self.inactive_frames = 0
 
     self.firm_grip_frames = self.firm_grip_frames + 1 if hands_on_level >= 2 else 0
     override = hands_on_level >= 3 or steering_disengage or self.firm_grip_frames >= PAUSE_FIRM_GRIP_FRAMES
