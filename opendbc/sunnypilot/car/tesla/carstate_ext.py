@@ -42,7 +42,7 @@ class CarStateExt:
     self.scroll_pressed_frames = 0
     self.cruise_enabled_frames = 0
     self.cancel_sent = False
-    self.await_rearm = False
+    self.rearm_state = 0  # 0 = re-engagement allowed, 1 = awaiting full release, 2 = awaiting fresh press
     self.released_frames = 0
     self.press_started_engaged = False
 
@@ -107,17 +107,22 @@ class CarStateExt:
 
       # The car itself can treat the tail of the cancel click as an engage command, which would
       # bounce everything straight back on. Instead of a timed window, block PCM re-engagement
-      # causally: stay blocked until the cancel press is fully released (debounced) and the user
-      # starts a fresh, deliberate press - which then re-engages immediately.
+      # causally with an explicit state machine: after a cancel, first the cancel press must be
+      # fully released (debounced), and only a fresh press after that re-allows engagement.
+      # NOTE: the release counter must be reset by the press BEFORE any rearm decision, otherwise
+      # the cancel press itself instantly rearms off its own stale pre-press count (the Instant
+      # re-engage bug found on the road, 2026-07-04).
       if cancel:
-        self.await_rearm = True
+        self.rearm_state = 1
       if scroll_wheel_pressed:
-        if self.await_rearm and self.released_frames >= REARM_RELEASE_FRAMES:
-          self.await_rearm = False
+        if self.rearm_state == 2:
+          self.rearm_state = 0  # fresh press after full release: the driver wants to re-engage
         self.released_frames = 0
       else:
         self.released_frames += 1
-      if self.await_rearm:
+        if self.rearm_state == 1 and self.released_frames >= REARM_RELEASE_FRAMES:
+          self.rearm_state = 2
+      if self.rearm_state != 0:
         ret.blockPcmEnable = True
 
       if cancel:
