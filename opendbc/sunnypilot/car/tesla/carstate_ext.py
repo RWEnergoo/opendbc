@@ -81,7 +81,7 @@ class CarStateExt:
       # The wheel click is normally handled by the AP computer, which openpilot replaces, so the
       # press goes nowhere and no PRE_CANCEL appears. Read it from the bus ourselves: preferably
       # the right-wheel-specific press on the vehicle bus, otherwise the shared UI_warning bit
-      # (both wheels + scroll ticks; see BUTTON_CANCEL_HOLD_DURATIONS notes).
+      # (both wheels + scroll ticks; see the trigger notes at the top of this file).
       if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
         scroll_wheel_pressed = self.right_pressed
       else:
