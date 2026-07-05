@@ -71,13 +71,17 @@ class CarStateExt:
       # read the per-wheel switch signals from index-1 frames. Track freshness via
       # ts_nanos so a mid-drive bus dropout is detected (vl holds stale values forever).
       # SIM_VEHICLE_BUS_LOSS starves these reads so the genuine failover path runs.
+      # NOTE: vl is lazy-registering (VLDict), ts_nanos is a plain dict - the vl access
+      # MUST come first or ts_nanos raises KeyError and card crash-loops ("canError",
+      # shown as "Unknown Vehicle Variant"; found on the road 2026-07-05).
+      swc_index = int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"])
       swc_ts = cp_adas.ts_nanos["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]
       if self.CP_SP.flags & TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS:
         swc_ts = self.swc_ts_prev
       if swc_ts != self.swc_ts_prev:
         self.swc_ts_prev = swc_ts
         self.swc_stale_frames = 0
-        if int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]) == 1:
+        if swc_index == 1:
           self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
       elif self.swc_stale_frames < SWC_STALE_FRAMES:
         self.swc_stale_frames += 1
