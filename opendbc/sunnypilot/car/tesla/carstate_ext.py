@@ -13,6 +13,7 @@ from opendbc.car.tesla.values import DBC, CANBUS
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
+GearShifter = structs.CarState.GearShifter
 
 # Cancel trigger behavior is hardware-determined, no user setting (findings from
 # labeled protocol test route 00000009--399b5802f2):
@@ -48,6 +49,7 @@ class CarStateExt:
     self.cruise_enabled_frames = 0
     self.cancel_sent = False
     self.rearm_state = 0  # 0 = re-engagement allowed, 1 = awaiting full release, 2 = awaiting fresh press
+    self.gear_shifter_prev = GearShifter.park
     self.button_cancel_rearm = False  # carcontroller sends a standing silent cancel while set
     self.released_frames = 0
     self.press_started_engaged = False
@@ -130,6 +132,11 @@ class CarStateExt:
       # where a click would engage instead)
       if self.scroll_pressed_frames == ALL_OFF_HOLD_FRAMES:
         cancel = True
+
+      # Shifting into Park is the same all-off pulse: nothing should stay engaged in P
+      if ret.gearShifter == GearShifter.park and self.gear_shifter_prev != GearShifter.park:
+        cancel = True
+      self.gear_shifter_prev = ret.gearShifter
 
       # The car itself can treat the tail of the cancel click as an engage command, which would
       # bounce everything straight back on. Instead of a timed window, block PCM re-engagement

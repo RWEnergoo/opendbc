@@ -66,7 +66,7 @@ class SteerOverridePause:
 
   def update(self, lat_active: bool, latActive: bool, hands_on_level: int, steering_disengage: bool,
              v_ego: float, desired_angle: float, actual_angle: float,
-             steering_torque: float, steering_rate: float) -> bool:
+             steering_torque: float, steering_rate: float, standstill: bool) -> bool:
     if not self.enabled:
       return lat_active
 
@@ -102,7 +102,8 @@ class SteerOverridePause:
         wheel_at_rest = abs(steering_rate) < RESUME_MAX_WHEEL_RATE
         angle_ok = abs(desired_angle - actual_angle) < float(np.interp(v_ego, RESUME_ANGLE_DELTA_BP, RESUME_ANGLE_DELTA_V))
 
-        if grip_released and wheel_at_rest and angle_ok:
+        # never take the wheel back while the car is stationary (parking maneuvers)
+        if grip_released and wheel_at_rest and angle_ok and not standstill:
           self.resume_timer += 1
         else:
           self.resume_timer = 0

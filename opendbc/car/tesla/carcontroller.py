@@ -42,7 +42,7 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     lat_active = CC.latActive and CS.hands_on_level < 3
     lat_active = self.steer_override_pause.update(lat_active, CC.latActive, CS.hands_on_level, CS.out.steeringDisengage,
                                                   CS.out.vEgoRaw, actuators.steeringAngleDeg, CS.out.steeringAngleDeg,
-                                                  CS.out.steeringTorque, CS.out.steeringRateDeg)
+                                                  CS.out.steeringTorque, CS.out.steeringRateDeg, CS.out.standstill)
 
     if self.frame % 2 == 0:
       # Angular rate limit based on speed
