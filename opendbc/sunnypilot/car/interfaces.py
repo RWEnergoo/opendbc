@@ -130,6 +130,9 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if int(params_dict.get("TeslaSimVehicleBusLoss", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS.value
 
+    if int(params_dict.get("TeslaGapAdjustTilt", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.GAP_ADJUST_TILT.value
+
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                              can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:
