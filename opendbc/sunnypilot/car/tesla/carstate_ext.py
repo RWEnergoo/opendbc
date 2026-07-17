@@ -57,8 +57,10 @@ class CarStateExt:
     self.has_vehicle_bus = bool(CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS)
     self.gap_adjust_tilt = bool(CP_SP.flags & TeslaFlagsSP.GAP_ADJUST_TILT)
     self.right_pressed = False
-    self.right_tilt = False
-    self.right_tilt_prev = False
+    self.tilt_right = False
+    self.tilt_left = False
+    self.tilt_right_prev = False
+    self.tilt_left_prev = False
     self.swc_ts_prev = 0
     self.swc_stale_frames = SWC_STALE_FRAMES
 
@@ -88,19 +90,24 @@ class CarStateExt:
         self.swc_stale_frames = 0
         if swc_index == 1:
           self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
-          self.right_tilt = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2 or \
-                            cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
+          self.tilt_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
+          self.tilt_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
       elif self.swc_stale_frames < SWC_STALE_FRAMES:
         self.swc_stale_frames += 1
 
-      # Right wheel tilt = the stock following-distance gesture. Surface it as the standard
-      # gapAdjustCruise button: a tap cycles the longitudinal personality, a 0.5s hold toggles
-      # Experimental Mode (both handled by existing selfdrived/CruiseHelper plumbing).
+      # Right wheel tilt = the stock following-distance gesture, direction-aware like factory:
+      # tilt right -> gapAdjustCruise (personality one step more relaxed; 0.5s hold toggles
+      # Experimental Mode via CruiseHelper), tilt left -> altButton2 (one step more aggressive).
+      # Directional stepping is handled in selfdrived.py.
       if self.gap_adjust_tilt and self.swc_stale_frames < SWC_STALE_FRAMES:
-        if self.right_tilt != self.right_tilt_prev:
+        if self.tilt_right != self.tilt_right_prev:
           ret.buttonEvents = [*ret.buttonEvents,
-                              structs.CarState.ButtonEvent(pressed=self.right_tilt, type=ButtonType.gapAdjustCruise)]
-        self.right_tilt_prev = self.right_tilt
+                              structs.CarState.ButtonEvent(pressed=self.tilt_right, type=ButtonType.gapAdjustCruise)]
+        if self.tilt_left != self.tilt_left_prev:
+          ret.buttonEvents = [*ret.buttonEvents,
+                              structs.CarState.ButtonEvent(pressed=self.tilt_left, type=ButtonType.altButton2)]
+        self.tilt_right_prev = self.tilt_right
+        self.tilt_left_prev = self.tilt_left
 
     cp_party = can_parsers[Bus.party]
     cp_ap_party = can_parsers[Bus.ap_party]
