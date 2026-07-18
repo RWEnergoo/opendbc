@@ -90,8 +90,10 @@ class CarStateExt:
         self.swc_stale_frames = 0
         if swc_index == 1:
           self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
-          self.tilt_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
-          self.tilt_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
+          # Road test (2026-07-16): the DBC tilt signal names are inverted vs the physical
+          # direction on the Highland wheel - swcRightTiltLeft fires on a physical RIGHT tilt
+          self.tilt_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
+          self.tilt_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
       elif self.swc_stale_frames < SWC_STALE_FRAMES:
         self.swc_stale_frames += 1
 
