@@ -43,7 +43,7 @@ class CarStateExt:
     self.CP = CP
     self.CP_SP = CP_SP
 
-    self.infotainment_3_finger_press = 0
+    self.active_touch_points = 0
     self.pre_cancel_prev = False
     self.scroll_pressed_frames = 0
     self.cruise_enabled_frames = 0
@@ -68,11 +68,20 @@ class CarStateExt:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
       cp_adas = can_parsers[Bus.adas]
 
-      prev_infotainment_3_finger_press = self.infotainment_3_finger_press
-      self.infotainment_3_finger_press = int(cp_adas.vl["UI_status2"]["UI_activeTouchPoints"])
+      prev_active_touch_points = self.active_touch_points
+      self.active_touch_points = int(cp_adas.vl["UI_status2"]["UI_activeTouchPoints"])
 
-      ret.buttonEvents = [*create_button_events(self.infotainment_3_finger_press, prev_infotainment_3_finger_press,
-                                                {3: ButtonType.lkas})]
+      finger_count = None
+      if self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER:
+        finger_count = 3
+      elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_4_FINGER:
+        finger_count = 4
+      elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER:
+        finger_count = 5
+
+      if finger_count is not None:
+        ret.buttonEvents = [*create_button_events(self.active_touch_points, prev_active_touch_points,
+                                                  {finger_count: ButtonType.lkas})]
 
       # VCLEFT_switchStatus is multiplexed and the parser ignores the mux, so only
       # read the per-wheel switch signals from index-1 frames. Track freshness via
@@ -114,6 +123,7 @@ class CarStateExt:
         self.tilt_physical_right_prev = self.tilt_physical_right
 
     cp_party = can_parsers[Bus.party]
+
     cp_ap_party = can_parsers[Bus.ap_party]
 
     if self.CP_SP.flags & TeslaFlagsSP.BUTTON_CANCELS:
