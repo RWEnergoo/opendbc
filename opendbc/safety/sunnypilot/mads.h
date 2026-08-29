@@ -48,6 +48,7 @@ inline void m_mads_state_init(void) {
   m_mads_state.system_enabled = false;
   m_mads_state.disengage_lateral_on_brake = false;
   m_mads_state.pause_lateral_on_brake = false;
+  m_mads_state.pause_lateral_on_steering_override = false;
 
   m_mads_state.acc_main.previous = false;
   m_mads_state.acc_main.transition = MADS_EDGE_NO_CHANGE;
@@ -101,6 +102,19 @@ inline void m_update_control_state(void) {
     allowed = false;  // No matter what, no further control processing on this cycle
   }
 
+  // With steering override pause, mirror the pause_lateral_on_brake pattern:
+  // release of the override might request controls if it was the ONLY reason for disengagement
+  if (allowed && m_mads_state.pause_lateral_on_steering_override) {
+    if ((m_mads_state.mads_steering_disengage.transition == MADS_EDGE_FALLING) &&
+        (m_mads_state.current_disengage.active_reason == MADS_DISENGAGE_REASON_STEERING_DISENGAGE) &&
+        (m_mads_state.current_disengage.pending_reasons == MADS_DISENGAGE_REASON_STEERING_DISENGAGE)) {
+      m_mads_state.controls_requested_lateral = true;
+    } else if (m_mads_state.mads_steering_disengage.current) {
+      allowed = false;
+    } else {
+    }
+  }
+
   if (m_mads_state.disengage_lateral_on_brake && (m_mads_state.braking.transition == MADS_EDGE_RISING)) {
     mads_exit_controls(MADS_DISENGAGE_REASON_BRAKE);
     allowed = false;
@@ -152,8 +166,10 @@ inline void mads_set_alternative_experience(const int *mode) {
   const bool mads_enabled = (*mode & ALT_EXP_ENABLE_MADS) != 0;
   const bool disengage_lateral_on_brake = (*mode & ALT_EXP_MADS_DISENGAGE_LATERAL_ON_BRAKE) != 0;
   const bool pause_lateral_on_brake = (*mode & ALT_EXP_MADS_PAUSE_LATERAL_ON_BRAKE) != 0;
+  const bool pause_lateral_on_steering_override = (*mode & ALT_EXP_MADS_STEER_OVERRIDE_PAUSE_LATERAL) != 0;
 
   mads_set_system_state(mads_enabled, disengage_lateral_on_brake, pause_lateral_on_brake);
+  m_mads_state.pause_lateral_on_steering_override = pause_lateral_on_steering_override;
 }
 
 extern inline void mads_set_system_state(const bool enabled, const bool disengage_lateral_on_brake, const bool pause_lateral_on_brake) {

@@ -7,6 +7,8 @@ from opendbc.car.tesla.teslacan import TeslaCAN
 from opendbc.car.tesla.values import CarControllerParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
+from opendbc.sunnypilot.car.tesla.gas_brake_blend import GasBrakeBlend
+from opendbc.sunnypilot.car.tesla.steer_override_pause import SteerOverridePause
 
 
 def get_safety_CP():
@@ -23,6 +25,8 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     self.apply_angle_last = 0
     self.packer = CANPacker(dbc_names[Bus.party])
     self.tesla_can = TeslaCAN(CP, self.packer)
+    self.steer_override_pause = SteerOverridePause(CP_SP)
+    self.gas_brake_blend = GasBrakeBlend(CP_SP)
 
     # Vehicle model used for lateral limiting
     self.VM = VehicleModel(get_safety_CP())
@@ -36,6 +40,9 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # When enabling in a tight curve, we wait until user reduces steering force to start steering.
     # Canceling is done on rising edge and is handled generically with CC.cruiseControl.cancel
     lat_active = CC.latActive and CS.hands_on_level < 3
+    lat_active = self.steer_override_pause.update(lat_active, CC.latActive, CS.hands_on_level, CS.out.steeringDisengage,
+                                                  CS.out.vEgoRaw, actuators.steeringAngleDeg, CS.out.steeringAngleDeg,
+                                                  CS.out.steeringTorque, CS.out.steeringRateDeg, CS.out.standstill)
 
     if self.frame % 2 == 0:
       # Angular rate limit based on speed
@@ -50,8 +57,11 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # Longitudinal control
     if self.CP.openpilotLongitudinalControl:
       if self.frame % 4 == 0:
-        state = 13 if CC.cruiseControl.cancel else 4  # 4=ACC_ON, 13=ACC_CANCEL_GENERIC_SILENT
+        # 4=ACC_ON, 13=ACC_CANCEL_GENERIC_SILENT. The standing cancel during the button rearm
+        # window keeps the DI from completing the cancel click's tail engage (silently)
+        state = 13 if (CC.cruiseControl.cancel or CS.button_cancel_rearm) else 4
         accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+        accel = self.gas_brake_blend.update(accel, CC.longActive, CS.accel_pedal_pos)
         cntr = (self.frame // 4) % 8
         can_sends.append(self.tesla_can.create_longitudinal_command(state, accel, cntr, CS.out.vEgo, CC.longActive))
 
