@@ -57,10 +57,10 @@ class CarStateExt:
     self.has_vehicle_bus = bool(CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS)
     self.gap_adjust_tilt = bool(CP_SP.flags & TeslaFlagsSP.GAP_ADJUST_TILT)
     self.right_pressed = False
-    self.tilt_right = False
-    self.tilt_left = False
-    self.tilt_right_prev = False
-    self.tilt_left_prev = False
+    self.tilt_physical_left = False
+    self.tilt_physical_right = False
+    self.tilt_physical_left_prev = False
+    self.tilt_physical_right_prev = False
     self.swc_ts_prev = 0
     self.swc_stale_frames = SWC_STALE_FRAMES
 
@@ -90,26 +90,28 @@ class CarStateExt:
         self.swc_stale_frames = 0
         if swc_index == 1:
           self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
-          # Road test (2026-07-16): the DBC tilt signal names are inverted vs the physical
-          # direction on the Highland wheel - swcRightTiltLeft fires on a physical RIGHT tilt
-          self.tilt_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
-          self.tilt_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
+          # Verified from a drive log (2026-08-29): the DBC names match the physical direction.
+          # Named by physical side here, because the button types they map to below read
+          # "backwards" on purpose (see the mapping comment) and that already caused one bug.
+          self.tilt_physical_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
+          self.tilt_physical_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
       elif self.swc_stale_frames < SWC_STALE_FRAMES:
         self.swc_stale_frames += 1
 
-      # Right wheel tilt = the stock following-distance gesture, direction-aware like factory:
-      # tilt right -> gapAdjustCruise (personality one step more relaxed; 0.5s hold toggles
-      # Experimental Mode via CruiseHelper), tilt left -> altButton2 (one step more aggressive).
-      # Directional stepping is handled in selfdrived.py.
+      # Right wheel tilt = the stock following-distance gesture. Physical LEFT is carried by
+      # gapAdjustCruise and physical RIGHT by altButton2, so that selfdrived's stepping
+      # (gapAdjustCruise = +1 = more relaxed) yields the factory feel: right = more
+      # aggressive, left = more relaxed. Experimental Mode holds are mapped separately in
+      # selfdrived so they keep the natural switch convention (right = on).
       if self.gap_adjust_tilt and self.swc_stale_frames < SWC_STALE_FRAMES:
-        if self.tilt_right != self.tilt_right_prev:
+        if self.tilt_physical_left != self.tilt_physical_left_prev:
           ret.buttonEvents = [*ret.buttonEvents,
-                              structs.CarState.ButtonEvent(pressed=self.tilt_right, type=ButtonType.gapAdjustCruise)]
-        if self.tilt_left != self.tilt_left_prev:
+                              structs.CarState.ButtonEvent(pressed=self.tilt_physical_left, type=ButtonType.gapAdjustCruise)]
+        if self.tilt_physical_right != self.tilt_physical_right_prev:
           ret.buttonEvents = [*ret.buttonEvents,
-                              structs.CarState.ButtonEvent(pressed=self.tilt_left, type=ButtonType.altButton2)]
-        self.tilt_right_prev = self.tilt_right
-        self.tilt_left_prev = self.tilt_left
+                              structs.CarState.ButtonEvent(pressed=self.tilt_physical_right, type=ButtonType.altButton2)]
+        self.tilt_physical_left_prev = self.tilt_physical_left
+        self.tilt_physical_right_prev = self.tilt_physical_right
 
     cp_party = can_parsers[Bus.party]
     cp_ap_party = can_parsers[Bus.ap_party]
