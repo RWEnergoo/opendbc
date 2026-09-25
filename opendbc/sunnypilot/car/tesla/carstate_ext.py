@@ -13,6 +13,29 @@ from opendbc.car.tesla.values import DBC, CANBUS
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
+GearShifter = structs.CarState.GearShifter
+
+# Cancel trigger behavior is hardware-determined, no user setting (findings from
+# labeled protocol test route 00000009--399b5802f2):
+# - With the VEHICLE bus, VCLEFT_switchStatus carries clean per-wheel signals
+#   (swcRightPressed / swcLeftPressed / per-wheel scroll ticks), so the cancel
+#   trigger uses ONLY the right wheel press and a plain click cancels instantly:
+#   scroll ticks, volume clicks and the left-wheel chill-mode hold can never cancel.
+# - Without the vehicle bus, the only wheel signal is UI_warning.scrollWheelPressed,
+#   which fires on BOTH wheels for clicks (100-200ms pulses), every scroll tick
+#   (~100ms pulses) and holds. An instant trigger is unsafe there (every scroll tick
+#   would cancel), so a 0.5s continuous hold is required: inherently scroll- and
+#   short-click-proof; only a long left-wheel hold remains indistinguishable.
+INSTANT_HOLD_FRAMES = 1
+FALLBACK_HOLD_FRAMES = 50  # 0.5s at 100Hz
+# Runtime failover: if VCLEFT_switchStatus stops arriving mid-drive (harness/bus fault),
+# fall back to the shared UI_warning bit within 1s so the button always keeps working -
+# without the button, lateral could otherwise not be switched off at all
+SWC_STALE_FRAMES = 100  # 1s at 100Hz
+# Holding the button this long disengages EVERYTHING regardless of state - the "all off"
+# escape for lateral-only mode (e.g. arriving home with MADS steering still active)
+ALL_OFF_HOLD_FRAMES = 150  # 1.5s at 100Hz
+REARM_RELEASE_FRAMES = 20  # 200ms debounce: the cancel press must be fully released before a new press re-arms
 
 
 class CarStateExt:
@@ -20,20 +43,161 @@ class CarStateExt:
     self.CP = CP
     self.CP_SP = CP_SP
 
-    self.infotainment_3_finger_press = 0
+    self.active_touch_points = 0
+    self.pre_cancel_prev = False
+    self.scroll_pressed_frames = 0
+    self.cruise_enabled_frames = 0
+    self.cancel_sent = False
+    self.rearm_state = 0  # 0 = re-engagement allowed, 1 = awaiting full release, 2 = awaiting fresh press
+    self.gear_shifter_prev = GearShifter.park
+    self.button_cancel_rearm = False  # carcontroller sends a standing silent cancel while set
+    self.released_frames = 0
+    self.press_started_engaged = False
+
+    self.has_vehicle_bus = bool(CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS)
+    self.gap_adjust_tilt = bool(CP_SP.flags & TeslaFlagsSP.GAP_ADJUST_TILT)
+    self.right_pressed = False
+    self.tilt_physical_left = False
+    self.tilt_physical_right = False
+    self.tilt_physical_left_prev = False
+    self.tilt_physical_right_prev = False
+    self.swc_ts_prev = 0
+    self.swc_stale_frames = SWC_STALE_FRAMES
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
       cp_adas = can_parsers[Bus.adas]
 
-      prev_infotainment_3_finger_press = self.infotainment_3_finger_press
-      self.infotainment_3_finger_press = int(cp_adas.vl["UI_status2"]["UI_activeTouchPoints"])
+      prev_active_touch_points = self.active_touch_points
+      self.active_touch_points = int(cp_adas.vl["UI_status2"]["UI_activeTouchPoints"])
 
-      ret.buttonEvents = [*create_button_events(self.infotainment_3_finger_press, prev_infotainment_3_finger_press,
-                                                {3: ButtonType.lkas})]
+      finger_count = None
+      if self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER:
+        finger_count = 3
+      elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_4_FINGER:
+        finger_count = 4
+      elif self.CP_SP.flags & TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER:
+        finger_count = 5
+
+      if finger_count is not None:
+        ret.buttonEvents = [*create_button_events(self.active_touch_points, prev_active_touch_points,
+                                                  {finger_count: ButtonType.lkas})]
+
+      # VCLEFT_switchStatus is multiplexed and the parser ignores the mux, so only
+      # read the per-wheel switch signals from index-1 frames. Track freshness via
+      # ts_nanos so a mid-drive bus dropout is detected (vl holds stale values forever).
+      # SIM_VEHICLE_BUS_LOSS starves these reads so the genuine failover path runs.
+      # NOTE: vl is lazy-registering (VLDict), ts_nanos is a plain dict - the vl access
+      # MUST come first or ts_nanos raises KeyError and card crash-loops ("canError",
+      # shown as "Unknown Vehicle Variant"; found on the road 2026-07-05).
+      swc_index = int(cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"])
+      swc_ts = cp_adas.ts_nanos["VCLEFT_switchStatus"]["VCLEFT_switchStatusIndex"]
+      if self.CP_SP.flags & TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS:
+        swc_ts = self.swc_ts_prev
+      if swc_ts != self.swc_ts_prev:
+        self.swc_ts_prev = swc_ts
+        self.swc_stale_frames = 0
+        if swc_index == 1:
+          self.right_pressed = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightPressed"] == 2  # SWITCH_ON
+          # Verified from a drive log (2026-08-29): the DBC names match the physical direction.
+          # Named by physical side here, because the button types they map to below read
+          # "backwards" on purpose (see the mapping comment) and that already caused one bug.
+          self.tilt_physical_left = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltLeft"] == 2
+          self.tilt_physical_right = cp_adas.vl["VCLEFT_switchStatus"]["VCLEFT_swcRightTiltRight"] == 2
+      elif self.swc_stale_frames < SWC_STALE_FRAMES:
+        self.swc_stale_frames += 1
+
+      # Right wheel tilt = the stock following-distance gesture. Physical LEFT is carried by
+      # gapAdjustCruise and physical RIGHT by altButton2, so that selfdrived's stepping
+      # (gapAdjustCruise = +1 = more relaxed) yields the factory feel: right = more
+      # aggressive, left = more relaxed. Experimental Mode holds are mapped separately in
+      # selfdrived so they keep the natural switch convention (right = on).
+      if self.gap_adjust_tilt and self.swc_stale_frames < SWC_STALE_FRAMES:
+        if self.tilt_physical_left != self.tilt_physical_left_prev:
+          ret.buttonEvents = [*ret.buttonEvents,
+                              structs.CarState.ButtonEvent(pressed=self.tilt_physical_left, type=ButtonType.gapAdjustCruise)]
+        if self.tilt_physical_right != self.tilt_physical_right_prev:
+          ret.buttonEvents = [*ret.buttonEvents,
+                              structs.CarState.ButtonEvent(pressed=self.tilt_physical_right, type=ButtonType.altButton2)]
+        self.tilt_physical_left_prev = self.tilt_physical_left
+        self.tilt_physical_right_prev = self.tilt_physical_right
 
     cp_party = can_parsers[Bus.party]
+
     cp_ap_party = can_parsers[Bus.ap_party]
+
+    if self.CP_SP.flags & TeslaFlagsSP.BUTTON_CANCELS:
+      cancel = False
+
+      # The DI briefly reports PRE_CANCEL when a cancel request reaches it while engaged.
+      # Stock openpilot treats PRE_CANCEL as engaged and keeps commanding ACC_ON, swallowing
+      # the user's cancel. Surface the rising edge as a cancel button so the press disengages.
+      cruise_state = self.can_define.dv["DI_state"]["DI_cruiseState"].get(int(cp_party.vl["DI_state"]["DI_cruiseState"]), None)
+      pre_cancel = cruise_state == "PRE_CANCEL"
+      if pre_cancel and not self.pre_cancel_prev:
+        cancel = True
+      self.pre_cancel_prev = pre_cancel
+
+      # The wheel click is normally handled by the AP computer, which openpilot replaces, so the
+      # press goes nowhere and no PRE_CANCEL appears. Read it from the bus ourselves: preferably
+      # the right-wheel-specific press on the vehicle bus (instant click), with the shared
+      # UI_warning bit (both wheels + scroll ticks, 0.5s hold) as fallback - selected at runtime
+      # so a mid-drive vehicle bus dropout fails over within a second.
+      vehicle_bus_fresh = self.has_vehicle_bus and self.swc_stale_frames < SWC_STALE_FRAMES
+      if vehicle_bus_fresh:
+        scroll_wheel_pressed = self.right_pressed
+        cancel_hold_frames = INSTANT_HOLD_FRAMES
+      else:
+        scroll_wheel_pressed = cp_party.vl["UI_warning"]["scrollWheelPressed"] == 1
+        cancel_hold_frames = FALLBACK_HOLD_FRAMES
+      self.cruise_enabled_frames = self.cruise_enabled_frames + 1 if ret.cruiseState.enabled else 0
+      self.scroll_pressed_frames = self.scroll_pressed_frames + 1 if scroll_wheel_pressed else 0
+      if not scroll_wheel_pressed:
+        self.cancel_sent = False
+      elif self.scroll_pressed_frames == 1:
+        # only a press that STARTED while engaged may cancel, so holding the
+        # engaging click itself never bounces back off (matters at short hold settings)
+        self.press_started_engaged = self.cruise_enabled_frames > 50
+
+      if self.scroll_pressed_frames >= cancel_hold_frames and not self.cancel_sent and self.press_started_engaged:
+        cancel = True
+        self.cancel_sent = True
+
+      # All-off escape: a long hold cancels unconditionally (also in lateral-only mode,
+      # where a click would engage instead)
+      if self.scroll_pressed_frames == ALL_OFF_HOLD_FRAMES:
+        cancel = True
+
+      # Shifting into Park is the same all-off pulse: nothing should stay engaged in P
+      if ret.gearShifter == GearShifter.park and self.gear_shifter_prev != GearShifter.park:
+        cancel = True
+      self.gear_shifter_prev = ret.gearShifter
+
+      # The car itself can treat the tail of the cancel click as an engage command, which would
+      # bounce everything straight back on. Instead of a timed window, block PCM re-engagement
+      # causally with an explicit state machine: after a cancel, first the cancel press must be
+      # fully released (debounced), and only a fresh press after that re-allows engagement.
+      # NOTE: the release counter must be reset by the press BEFORE any rearm decision, otherwise
+      # the cancel press itself instantly rearms off its own stale pre-press count (the Instant
+      # re-engage bug found on the road, 2026-07-04).
+      if cancel:
+        self.rearm_state = 1
+      if scroll_wheel_pressed:
+        if self.rearm_state == 2:
+          self.rearm_state = 0  # fresh press after full release: the driver wants to re-engage
+        self.released_frames = 0
+      else:
+        self.released_frames += 1
+        if self.rearm_state == 1 and self.released_frames >= REARM_RELEASE_FRAMES:
+          self.rearm_state = 2
+      if self.rearm_state != 0:
+        ret.blockPcmEnable = True
+      # While rearming, the carcontroller sends a standing ACC_CANCEL_GENERIC_SILENT instead of
+      # ACC_ON, so the DI never completes the click-tail engage - no engage/disengage chime
+      self.button_cancel_rearm = self.rearm_state != 0
+
+      if cancel:
+        ret.buttonEvents = [*ret.buttonEvents, structs.CarState.ButtonEvent(pressed=True, type=ButtonType.cancel)]
 
     speed_units = self.can_define.dv["DI_state"]["DI_speedUnits"].get(int(cp_party.vl["DI_state"]["DI_speedUnits"]), None)
     speed_limit = cp_ap_party.vl["DAS_status"]["DAS_fusedSpeedLimit"]

@@ -5,6 +5,7 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 import json
+import os
 import numpy as np
 from typing import NamedTuple
 from collections.abc import Callable
@@ -18,7 +19,7 @@ from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_trac
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
-from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 
@@ -85,6 +86,7 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
 
   _initialize_custom_longitudinal_tuning(CI, CP, CP_SP, params_dict)
   _initialize_coop_steering(CP, CP_SP, params_dict)
+  _initialize_tesla_mads_screen_button(CP, CP_SP, params_dict)
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
   _initialize_stop_and_go(CP, CP_SP, params_dict)
   _initialize_toyota(CP, CP_SP, params_dict)
@@ -111,9 +113,49 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if coop_steering:
       CP_SP.flags |= TeslaFlagsSP.COOP_STEERING.value
 
+    if int(params_dict.get("TeslaButtonCancels", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.BUTTON_CANCELS.value
+
+    if int(params_dict.get("TeslaSteerOverridePauses", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_PAUSES.value
+
+    resume_delay_idx = min(max(int(params_dict.get("TeslaSteerOverrideResumeDelay", 1)), 0), 3)
+    if resume_delay_idx & 1:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_RESUME_DELAY_BIT0.value
+    if resume_delay_idx & 2:
+      CP_SP.flags |= TeslaFlagsSP.STEER_OVERRIDE_RESUME_DELAY_BIT1.value
+
+    if int(params_dict.get("TeslaSoftGasThreshold", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.SOFT_GAS_THRESHOLD.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD
+
+    if int(params_dict.get("TeslaSimVehicleBusLoss", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.SIM_VEHICLE_BUS_LOSS.value
+
+    if int(params_dict.get("TeslaGapAdjustTilt", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.GAP_ADJUST_TILT.value
+
+
+def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
+                                         params_dict: dict[str, str]) -> None:
+  if CP.brand == 'tesla' and CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
+    selection = int(params_dict.get("TeslaMadsScreenButton", MadsScreenButtonType.OFF))
+    if selection == MadsScreenButtonType.THREE_FINGER:
+      CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER
+    elif selection == MadsScreenButtonType.FOUR_FINGER:
+      CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_4_FINGER.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_4_FINGER
+    elif selection == MadsScreenButtonType.FIVE_FINGER:
+      CP_SP.flags |= TeslaFlagsSP.MADS_SCREEN_BUTTON_5_FINGER.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_5_FINGER
+
 
 def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                              can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:
+  if can_recv is None or can_send is None or os.environ.get("REPLAY"):
+    return
+
   if CP.brand == 'hyundai':
     if CP.flags & HyundaiFlags.MANDO_RADAR and (CP.radarUnavailable or CP_SP.flags & HyundaiFlagsSP.ENHANCED_SCC):
       tracks_enabled = hyundai_enable_radar_tracks(can_recv, can_send, bus=0, addr=0x7d0)

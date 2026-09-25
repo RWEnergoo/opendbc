@@ -14,6 +14,7 @@ from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety, MAX_SPEED_DELTA, MAX_WRONG_COUNTERS, away_round, round_speed
 
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 
 MSG_DAS_steeringControl = 0x488
@@ -231,6 +232,36 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=0, eac_status=1, eac_error_code=0)))
           self.assertNotEqual(should_disengage, self.safety.get_controls_allowed())
           self.assertFalse(self.safety.get_steering_disengage_prev())
+
+  def test_soft_gas_threshold(self):
+    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 10% doesn't count as pressed
+    prev_sp = self.safety.get_current_safety_param_sp()
+    self.safety.set_current_safety_param_sp(prev_sp | TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
+    try:
+      for gas, pressed in ((0, False), (5, False), (10, False), (10.4, True), (25, True), (100, True)):
+        self.assertTrue(self._rx(self._user_gas_msg(gas)))
+        self.assertEqual(pressed, self.safety.get_gas_pressed_prev(), f"gas={gas}")
+    finally:
+      self.safety.set_current_safety_param_sp(prev_sp)
+      self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
+
+  def test_steering_wheel_disengage_with_override_pause(self):
+    # sunnypilot: with MADS_STEER_OVERRIDE_PAUSE_LATERAL, a hard steering override does not
+    # drop longitudinal controls_allowed (lateral is handled separately by MADS)
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.MADS_STEER_OVERRIDE_PAUSE_LATERAL)
+    for hands_on_level, eac_status, eac_error_code in ((3, 1, 0), (0, 0, 9)):
+      self.safety.set_controls_allowed(True)
+
+      self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=hands_on_level, eac_status=eac_status,
+                                                    eac_error_code=eac_error_code)))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self.assertTrue(self.safety.get_steering_disengage_prev())
+
+      self.assertTrue(self._rx(self._angle_meas_msg(0, hands_on_level=0, eac_status=1, eac_error_code=0)))
+      self.assertTrue(self.safety.get_controls_allowed())
+      self.assertFalse(self.safety.get_steering_disengage_prev())
+    self.safety.set_alternative_experience(0)
 
   def test_autopark_summon_while_enabled(self):
     # We should not respect Autopark that activates while controls are allowed
@@ -498,13 +529,47 @@ class TestTeslaVehicleBusSafety(TestTeslaSafetyBase):
     super().setUp()
     self.safety = libsafety_py.libsafety
     self.packer_adas = CANPackerSafety("tesla_model3_vehicle")
-    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS)
+    self.safety.set_current_safety_param_sp(TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER)
     self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, 0)
     self.safety.init_tests()
 
   def _lkas_button_msg(self, enabled):
     values = {"UI_activeTouchPoints": 3 if enabled else 0}
     return self.packer_adas.make_can_msg_safety("UI_status2", CANBUS.vehicle, values)
+
+  def _set_mads_screen_button_config(self, finger_flag):
+    param_sp = TeslaSafetyFlagsSP.HAS_VEHICLE_BUS
+    if finger_flag is not None:
+      param_sp |= finger_flag
+    self.safety.set_current_safety_param_sp(param_sp)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, 0)
+    self.safety.init_tests()
+
+  def _touch_points_msg(self, touch_points):
+    return self.packer_adas.make_can_msg_safety("UI_status2", CANBUS.vehicle, {"UI_activeTouchPoints": touch_points})
+
+  def test_mads_screen_button_finger_count_match(self):
+    """Configured finger count must match received touch-point count to register a MADS button press."""
+    configs = [
+      (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_3_FINGER, 3),
+      (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_4_FINGER, 4),
+      (TeslaSafetyFlagsSP.MADS_SCREEN_BUTTON_5_FINGER, 5),
+    ]
+    for config_flag, config_count in configs:
+      for actual in (0, 3, 4, 5):
+        with self.subTest(configured=config_count, actual=actual):
+          self._set_mads_screen_button_config(config_flag)
+          self._rx(self._touch_points_msg(actual))
+          expected = 1 if actual == config_count else 0  # PRESSED vs NOT_PRESSED
+          self.assertEqual(expected, self.safety.get_mads_button_press())
+
+  def test_mads_screen_button_disabled(self):
+    """With no finger-count flag set, touch messages must not change the MADS button state from UNAVAILABLE."""
+    self._set_mads_screen_button_config(None)
+    for actual in (0, 3, 4, 5):
+      with self.subTest(actual=actual):
+        self._rx(self._touch_points_msg(actual))
+        self.assertEqual(-1, self.safety.get_mads_button_press())  # UNAVAILABLE
 
 
 if __name__ == "__main__":

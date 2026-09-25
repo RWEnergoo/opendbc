@@ -33,6 +33,14 @@ static bool tesla_autopark_prev = false;
 extern bool tesla_has_vehicle_bus;
 bool tesla_has_vehicle_bus = false;
 
+// sunnypilot: light accelerator does not count as gas pressed
+extern bool tesla_soft_gas_threshold;
+bool tesla_soft_gas_threshold = false;
+
+// Configured MADS screen button finger count (0 = disabled, 3-5 = expected touch-point count)
+extern uint8_t tesla_mads_screen_button_fingers;
+uint8_t tesla_mads_screen_button_fingers = 0U;
+
 static uint8_t tesla_get_counter(const CANPacket_t *msg) {
 
   uint8_t cnt = 0;
@@ -157,7 +165,11 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // Gas pressed
     if (msg->addr == 0x118U) {
-      gas_pressed = (msg->data[4] != 0U);
+      // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 10%, raw 25 at
+      // 0.4%/bit) does not count as pressed so gentle braking may continue, matching stock
+      // TACC blending. SNA (255) still counts as pressed. Must match carstate.py.
+      const uint8_t tesla_gas_threshold = tesla_soft_gas_threshold ? 25U : 0U;
+      gas_pressed = (msg->data[4] > tesla_gas_threshold);
     }
 
     // Brake pressed
@@ -201,7 +213,9 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
   if (msg->bus == 1U) {
     if (msg->addr == 0x3DFU) {
-      mads_button_press = (msg->data[3] == 3U) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      if (tesla_mads_screen_button_fingers != 0U) {
+        mads_button_press = (msg->data[3] == tesla_mads_screen_button_fingers) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      }
     }
   }
 
@@ -380,8 +394,23 @@ static safety_config tesla_init(uint16_t param) {
 #endif
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER = 4;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER = 8;
+  const uint16_t TESLA_PARAM_SP_SOFT_GAS_THRESHOLD = 16;  // moved off bit 2: upstream took it for the MADS screen button
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
+  tesla_soft_gas_threshold = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_SOFT_GAS_THRESHOLD);
+
+  if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
+    tesla_mads_screen_button_fingers = 3U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER)) {
+    tesla_mads_screen_button_fingers = 4U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER)) {
+    tesla_mads_screen_button_fingers = 5U;
+  } else {
+    tesla_mads_screen_button_fingers = 0U;
+  }
 
   tesla_stock_aeb = false;
   tesla_stock_lkas = false;
