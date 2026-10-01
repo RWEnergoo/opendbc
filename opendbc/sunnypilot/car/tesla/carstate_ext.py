@@ -4,6 +4,7 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+import copy
 from enum import StrEnum
 
 from opendbc.car import Bus, create_button_events, structs
@@ -61,6 +62,7 @@ class CarStateExt:
     self.tilt_physical_right = False
     self.tilt_physical_left_prev = False
     self.tilt_physical_right_prev = False
+    self.das_status = None  # raw DAS_status from the AP computer, re-sent with the ISA bit set
     self.swc_ts_prev = 0
     self.swc_stale_frames = SWC_STALE_FRAMES
 
@@ -125,6 +127,12 @@ class CarStateExt:
     cp_party = can_parsers[Bus.party]
 
     cp_ap_party = can_parsers[Bus.ap_party]
+
+    if self.CP_SP.flags & TeslaFlagsSP.MUTE_ISA_CHIME:
+      # Keep the AP computer's own DAS_status so the carcontroller can re-send a verbatim copy
+      # with only DAS_suppressSpeedWarning flipped. Never synthesize these values: the message
+      # also carries blind spot, collision and lane departure warnings.
+      self.das_status = copy.copy(cp_ap_party.vl["DAS_status"])
 
     if self.CP_SP.flags & TeslaFlagsSP.BUTTON_CANCELS:
       cancel = False

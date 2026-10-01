@@ -43,6 +43,14 @@ class TeslaCAN:
     }
     return self.packer.make_can_msg("DAS_control", CANBUS.party, values)
 
+  def create_das_status_isa_mute(self, das_status):
+    # Verbatim copy of the AP computer's DAS_status with only the ISA chime suppress bit set.
+    # The packer recomputes DAS_statusChecksum (tesla_checksum), so the receiver accepts it.
+    # Sent ALONGSIDE the stock message: if we stop, the car's own copy simply takes over again.
+    values = dict(das_status)
+    values["DAS_suppressSpeedWarning"] = 1
+    return self.packer.make_can_msg("DAS_status", CANBUS.party, values)
+
   def create_steering_allowed(self):
     values = {
       "APS_eacAllow": 1,

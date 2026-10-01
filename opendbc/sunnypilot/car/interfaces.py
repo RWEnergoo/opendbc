@@ -135,6 +135,10 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if int(params_dict.get("TeslaGapAdjustTilt", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.GAP_ADJUST_TILT.value
 
+    if int(params_dict.get("TeslaMuteIsaChime", 0)) == 1:
+      CP_SP.flags |= TeslaFlagsSP.MUTE_ISA_CHIME.value
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.MUTE_ISA_CHIME
+
 
 def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                                          params_dict: dict[str, str]) -> None:
