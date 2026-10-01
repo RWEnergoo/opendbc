@@ -33,6 +33,18 @@ static bool tesla_autopark_prev = false;
 extern bool tesla_has_vehicle_bus;
 bool tesla_has_vehicle_bus = false;
 
+// sunnypilot: light accelerator does not count as gas pressed
+extern bool tesla_soft_gas_threshold;
+bool tesla_soft_gas_threshold = false;
+
+// sunnypilot: allow injecting DAS_status to mute the EU ISA speed chime
+extern bool tesla_mute_isa_chime;
+bool tesla_mute_isa_chime = false;
+
+// Configured MADS screen button finger count (0 = disabled, 3-5 = expected touch-point count)
+extern uint8_t tesla_mads_screen_button_fingers;
+uint8_t tesla_mads_screen_button_fingers = 0U;
+
 static uint8_t tesla_get_counter(const CANPacket_t *msg) {
 
   uint8_t cnt = 0;
@@ -157,7 +169,11 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // Gas pressed
     if (msg->addr == 0x118U) {
-      gas_pressed = (msg->data[4] != 0U);
+      // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 10%, raw 25 at
+      // 0.4%/bit) does not count as pressed so gentle braking may continue, matching stock
+      // TACC blending. SNA (255) still counts as pressed. Must match carstate.py.
+      const uint8_t tesla_gas_threshold = tesla_soft_gas_threshold ? 25U : 0U;
+      gas_pressed = (msg->data[4] > tesla_gas_threshold);
     }
 
     // Brake pressed
@@ -201,7 +217,9 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
   if (msg->bus == 1U) {
     if (msg->addr == 0x3DFU) {
-      mads_button_press = (msg->data[3] == 3U) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      if (tesla_mads_screen_button_fingers != 0U) {
+        mads_button_press = (msg->data[3] == tesla_mads_screen_button_fingers) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      }
     }
   }
 
@@ -371,6 +389,23 @@ static safety_config tesla_init(uint16_t param) {
     {0x27D, 0, 3, .check_relay = true, .disable_static_blocking = true},  // APS_eacMonitor
   };
 
+  // sunnypilot: same lists plus DAS_status, injected ALONGSIDE the AP computer's own copy
+  // (check_relay false: the stock message keeps flowing, we only add a copy with the ISA
+  // chime suppress bit set). Only permitted when the user enabled the feature.
+  static const CanMsg TESLA_M3_Y_MUTE_ISA_TX_MSGS[] = {
+    {0x488, 0, 4, .check_relay = true, .disable_static_blocking = true},   // DAS_steeringControl
+    {0x2b9, 0, 8, .check_relay = false},                                   // DAS_control (for cancel)
+    {0x27D, 0, 3, .check_relay = true, .disable_static_blocking = true},   // APS_eacMonitor
+    {0x39B, 0, 8, .check_relay = false},                                   // DAS_status (ISA chime mute)
+  };
+
+  static const CanMsg TESLA_M3_Y_LONG_MUTE_ISA_TX_MSGS[] = {
+    {0x488, 0, 4, .check_relay = true, .disable_static_blocking = true},  // DAS_steeringControl
+    {0x2b9, 0, 8, .check_relay = true, .disable_static_blocking = true},  // DAS_control
+    {0x27D, 0, 3, .check_relay = true, .disable_static_blocking = true},  // APS_eacMonitor
+    {0x39B, 0, 8, .check_relay = false},                                  // DAS_status (ISA chime mute)
+  };
+
   const uint16_t TESLA_FLAG_FSD_14 = 2;
   tesla_fsd_14 = GET_FLAG(param, TESLA_FLAG_FSD_14);
 
@@ -380,8 +415,25 @@ static safety_config tesla_init(uint16_t param) {
 #endif
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER = 4;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER = 8;
+  const uint16_t TESLA_PARAM_SP_SOFT_GAS_THRESHOLD = 16;  // moved off bit 2: upstream took it for the MADS screen button
+  const uint16_t TESLA_PARAM_SP_MUTE_ISA_CHIME = 32;
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
+  tesla_soft_gas_threshold = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_SOFT_GAS_THRESHOLD);
+  tesla_mute_isa_chime = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MUTE_ISA_CHIME);
+
+  if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
+    tesla_mads_screen_button_fingers = 3U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER)) {
+    tesla_mads_screen_button_fingers = 4U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER)) {
+    tesla_mads_screen_button_fingers = 5U;
+  } else {
+    tesla_mads_screen_button_fingers = 0U;
+  }
 
   tesla_stock_aeb = false;
   tesla_stock_lkas = false;
@@ -402,9 +454,17 @@ static safety_config tesla_init(uint16_t param) {
 
   safety_config ret;
   if (tesla_longitudinal) {
-    SET_TX_MSGS(TESLA_M3_Y_LONG_TX_MSGS, ret);
+    if (tesla_mute_isa_chime) {
+      SET_TX_MSGS(TESLA_M3_Y_LONG_MUTE_ISA_TX_MSGS, ret);
+    } else {
+      SET_TX_MSGS(TESLA_M3_Y_LONG_TX_MSGS, ret);
+    }
   } else {
-    SET_TX_MSGS(TESLA_M3_Y_TX_MSGS, ret);
+    if (tesla_mute_isa_chime) {
+      SET_TX_MSGS(TESLA_M3_Y_MUTE_ISA_TX_MSGS, ret);
+    } else {
+      SET_TX_MSGS(TESLA_M3_Y_TX_MSGS, ret);
+    }
   }
 
   if (tesla_has_vehicle_bus) {

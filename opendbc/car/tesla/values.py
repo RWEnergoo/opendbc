@@ -70,6 +70,7 @@ class CAR(Platforms):
 
 
 FW_QUERY_CONFIG = FwQueryConfig(
+  fw_version_regex=br".+,[EYX]\d?[A-Z]*\d{3}\.\d+(?:\.\d+)?",
   requests=[
     Request(
       [StdQueries.TESTER_PRESENT_REQUEST, StdQueries.SUPPLIER_SOFTWARE_VERSION_REQUEST],
@@ -86,6 +87,7 @@ FSD_14_FW = {
     b'TeMYG4_Main_0.0.0 (78),E4HP015.05.0',
     b'TeMYG4_Main_0.0.0 (77),E4H015.04.5',
     b'TeMYG4_Main_0.0.0 (78),E4H015.05.0',
+    b'TeMYG4_Main_0.0.0 (87),E4H015.08.3',
   ],
   CAR.TESLA_MODEL_Y: [
     b'TeMYG4_Legacy3Y_0.0.0 (6),Y4003.04.0',
