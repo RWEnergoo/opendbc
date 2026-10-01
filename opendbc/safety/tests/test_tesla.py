@@ -572,5 +572,35 @@ class TestTeslaVehicleBusSafety(TestTeslaSafetyBase):
         self.assertEqual(-1, self.safety.get_mads_button_press())  # UNAVAILABLE
 
 
+class TestTeslaMuteIsaChimeSafety(unittest.TestCase):
+  """sunnypilot: DAS_status may only be transmitted when the ISA chime mute feature is enabled"""
+
+  def setUp(self):
+    self.safety = libsafety_py.libsafety
+    self.packer = CANPackerSafety("tesla_model3_party")
+
+  def tearDown(self):
+    # leave the safety mode in its default state for other tests
+    self.safety.set_current_safety_param_sp(0)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, 0)
+    self.safety.init_tests()
+
+  def _das_status_msg(self):
+    return self.packer.make_can_msg_safety("DAS_status", 0, {"DAS_suppressSpeedWarning": 1})
+
+  def test_das_status_tx_gated_on_flag(self):
+    for longitudinal in (False, True):
+      for mute in (False, True):
+        with self.subTest(longitudinal=longitudinal, mute=mute):
+          param = TeslaSafetyFlags.LONG_CONTROL if longitudinal else 0
+          param_sp = TeslaSafetyFlagsSP.MUTE_ISA_CHIME if mute else 0
+          self.safety.set_current_safety_param_sp(param_sp)
+          self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, param)
+          self.safety.init_tests()
+          self.safety.set_controls_allowed(True)
+          # only allowed to inject DAS_status when the user enabled the feature
+          self.assertEqual(mute, self.safety.safety_tx_hook(self._das_status_msg()))
+
+
 if __name__ == "__main__":
   unittest.main()
