@@ -62,6 +62,10 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     # most recently received one. A free running 2Hz timer is not enough: both copies then alternate
     # at the same rate with a drifting phase, leaving the stock (unsuppressed) frame newest half of
     # the time. Purely additive - if we stop, the car's own copy simply takes over again.
+    #
+    # Deliberately NOT implemented by blocking the stock frame, even though that would be a more
+    # certain mute: DAS_status also carries blind spot, forward collision and lane departure
+    # warnings, and this branch is public. We add frames to the bus, we never take any away.
     if self.mute_isa_chime and CS.das_status is not None:
       isa_counter = int(CS.das_status["DAS_statusCounter"])
       if isa_counter != self.isa_counter_last:

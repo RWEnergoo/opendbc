@@ -392,6 +392,10 @@ static safety_config tesla_init(uint16_t param) {
   // sunnypilot: same lists plus DAS_status, injected ALONGSIDE the AP computer's own copy
   // (check_relay false: the stock message keeps flowing, we only add a copy with the ISA
   // chime suppress bit set). Only permitted when the user enabled the feature.
+  //
+  // check_relay MUST stay false here. Setting it true would make the panda block the car's own
+  // DAS_status, which also carries blind spot, forward collision and lane departure warnings.
+  // This branch adds frames to the bus and never removes any - see TESLA_CUSTOM.md.
   static const CanMsg TESLA_M3_Y_MUTE_ISA_TX_MSGS[] = {
     {0x488, 0, 4, .check_relay = true, .disable_static_blocking = true},   // DAS_steeringControl
     {0x2b9, 0, 8, .check_relay = false},                                   // DAS_control (for cancel)
