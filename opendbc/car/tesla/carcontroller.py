@@ -29,6 +29,7 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     self.steer_override_pause = SteerOverridePause(CP_SP)
     self.gas_brake_blend = GasBrakeBlend(CP_SP)
     self.mute_isa_chime = bool(CP_SP.flags & TeslaFlagsSP.MUTE_ISA_CHIME)
+    self.isa_counter_last = -1
 
     # Vehicle model used for lateral limiting
     self.VM = VehicleModel(get_safety_CP())
@@ -56,10 +57,16 @@ class CarController(CarControllerBase, CoopSteeringCarController):
     if self.frame % 10 == 0:
       can_sends.append(self.tesla_can.create_steering_allowed())
 
-    # sunnypilot: mute the EU ISA speed chime by injecting DAS_status (2Hz, like the car) with
-    # the suppress bit set. Purely additive - the AP computer keeps sending its own copy.
-    if self.mute_isa_chime and self.frame % 50 == 0 and CS.das_status is not None:
-      can_sends.append(self.tesla_can.create_das_status_isa_mute(CS.das_status))
+    # sunnypilot: mute the EU ISA speed chime. Echo the AP computer's own DAS_status the moment a
+    # new one arrives (counter change), with only the suppress bit set, so our copy is always the
+    # most recently received one. A free running 2Hz timer is not enough: both copies then alternate
+    # at the same rate with a drifting phase, leaving the stock (unsuppressed) frame newest half of
+    # the time. Purely additive - if we stop, the car's own copy simply takes over again.
+    if self.mute_isa_chime and CS.das_status is not None:
+      isa_counter = int(CS.das_status["DAS_statusCounter"])
+      if isa_counter != self.isa_counter_last:
+        self.isa_counter_last = isa_counter
+        can_sends.append(self.tesla_can.create_das_status_isa_mute(CS.das_status))
 
     # Longitudinal control
     if self.CP.openpilotLongitudinalControl:
