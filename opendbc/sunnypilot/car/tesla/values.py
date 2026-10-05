@@ -22,7 +22,6 @@ class TeslaFlagsSP(IntFlag):
   SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 10%) does not count as gas pressed; braking blends with pedal
   SIM_VEHICLE_BUS_LOSS = 1024  # dev/test: starve the button trigger's vehicle bus reads to exercise the failover path
   GAP_ADJUST_TILT = 2048  # right wheel tilt = following distance / experimental mode holds
-  MUTE_ISA_CHIME = 4096  # inject DAS_status with suppressSpeedWarning set, muting the EU ISA chime
 
 
 class MadsScreenButtonType:
@@ -38,4 +37,3 @@ class TeslaSafetyFlagsSP:
   MADS_SCREEN_BUTTON_4_FINGER = 4
   MADS_SCREEN_BUTTON_5_FINGER = 8
   SOFT_GAS_THRESHOLD = 16  # moved off bit 2: upstream took it for the MADS screen button
-  MUTE_ISA_CHIME = 32
