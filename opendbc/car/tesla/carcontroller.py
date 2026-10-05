@@ -8,7 +8,6 @@ from opendbc.car.tesla.values import CarControllerParams
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.sunnypilot.car.tesla.coop_steering import CoopSteeringCarController
 from opendbc.sunnypilot.car.tesla.gas_brake_blend import GasBrakeBlend
-from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 from opendbc.sunnypilot.car.tesla.steer_override_pause import SteerOverridePause
 
 
