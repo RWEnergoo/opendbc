@@ -234,12 +234,12 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertFalse(self.safety.get_steering_disengage_prev())
 
   def test_soft_gas_threshold(self):
-    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 10% doesn't count as pressed
+    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 20% doesn't count as pressed
     prev_sp = self.safety.get_current_safety_param_sp()
     self.safety.set_current_safety_param_sp(prev_sp | TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD)
     self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
     try:
-      for gas, pressed in ((0, False), (5, False), (10, False), (10.4, True), (25, True), (100, True)):
+      for gas, pressed in ((0, False), (10, False), (19.6, False), (20, False), (20.4, True), (25, True), (100, True)):
         self.assertTrue(self._rx(self._user_gas_msg(gas)))
         self.assertEqual(pressed, self.safety.get_gas_pressed_prev(), f"gas={gas}")
     finally:

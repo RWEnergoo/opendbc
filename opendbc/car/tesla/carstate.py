@@ -50,9 +50,9 @@ class CarState(CarStateBase, CarStateExt):
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
 
     # Gas pedal
-    # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 10%) does not count as
+    # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 20%) does not count as
     # pressed so gentle braking may continue, matching stock TACC. Must match safety tesla.h.
-    gas_threshold = 10.0 if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD else 0.0
+    gas_threshold = 20.0 if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD else 0.0
     self.accel_pedal_pos = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"]  # %, for GasBrakeBlend
     ret.gasPressed = self.accel_pedal_pos > gas_threshold
 

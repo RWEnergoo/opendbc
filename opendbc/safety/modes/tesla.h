@@ -165,10 +165,10 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // Gas pressed
     if (msg->addr == 0x118U) {
-      // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 10%, raw 25 at
+      // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 20%, raw 50 at
       // 0.4%/bit) does not count as pressed so gentle braking may continue, matching stock
       // TACC blending. SNA (255) still counts as pressed. Must match carstate.py.
-      const uint8_t tesla_gas_threshold = tesla_soft_gas_threshold ? 25U : 0U;
+      const uint8_t tesla_gas_threshold = tesla_soft_gas_threshold ? 50U : 0U;
       gas_pressed = (msg->data[4] > tesla_gas_threshold);
     }
 
