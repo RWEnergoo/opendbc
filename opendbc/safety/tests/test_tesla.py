@@ -80,9 +80,9 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
     self.safety.init_tests()
 
   def _angle_cmd_msg(self, angle: float, state: bool | int, increment_timer: bool = True, bus: int = 0):
-    # If FSD 14, translate steer control type to new flipped definition
-    if self.safety.get_current_safety_param() & TeslaSafetyFlags.FSD_14:
-      state = get_steer_ctrl_type(TeslaFlags.FSD_14, int(state))
+    # Translate the control type to its raw 3-bit value (shifted up one bit on legacy 2-bit firmware)
+    flags = TeslaFlags.FSD_14 if self.safety.get_current_safety_param() & TeslaSafetyFlags.FSD_14 else 0
+    state = get_steer_ctrl_type(flags, int(state))
 
     values = {"DAS_steeringAngleRequest": angle, "DAS_steeringControlType": state}
     if increment_timer:
@@ -303,9 +303,10 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
       self.assertEqual(self.LONGITUDINAL, self._tx(self._long_control_msg(0, acc_state=self.acc_states["ACC_ON"])))
 
   def test_steering_control_type(self):
-    # Only angle control is allowed (no LANE_KEEP_ASSIST or EMERGENCY_LANE_KEEP)
+    # Only NONE, ANGLE_CONTROL and LANE_KEEP_ASSIST (coop steering) are allowed: no EMERGENCY_LANE_KEEP or FSD
     self.safety.set_controls_allowed(True)
-    for steer_control_type in range(4):
+    fsd_14 = self.safety.get_current_safety_param() & TeslaSafetyFlags.FSD_14
+    for steer_control_type in range(8 if fsd_14 else 4):
       should_tx = steer_control_type in (self.steer_control_types["NONE"],
                                          self.steer_control_types["ANGLE_CONTROL"],
                                          self.steer_control_types["LANE_KEEP_ASSIST"])

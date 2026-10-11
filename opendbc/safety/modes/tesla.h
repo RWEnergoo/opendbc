@@ -119,15 +119,11 @@ static bool tesla_get_quality_flag_valid(const CANPacket_t *msg) {
 }
 
 static int tesla_get_steer_ctrl_type(const int ctrl_type) {
-  // Returns ANGLE_CONTROL-equivalent control type for FSD 14
+  // Returns the raw 3-bit DAS_steeringControlType (byte 2 bits 7:5) for a control type.
+  // FSD 14 firmware uses all 3 bits. Legacy firmware only uses the top 2 bits, so its values sit one bit higher
   int steer_ctrl_type = ctrl_type;
-  if (tesla_fsd_14) {
-    if (ctrl_type == 1) {
-      steer_ctrl_type = 2;
-    } else if (ctrl_type == 2) {
-      steer_ctrl_type = 1;
-    } else {
-    }
+  if (!tesla_fsd_14) {
+    steer_ctrl_type = ctrl_type * 2;
   }
   return steer_ctrl_type;
 }
@@ -228,7 +224,7 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // DAS_steeringControl
     if (msg->addr == 0x488U) {
-      int steering_control_type = msg->data[2] >> 6;
+      int steering_control_type = msg->data[2] >> 5;  // DAS_steeringControlType
       bool tesla_stock_lkas_now = steering_control_type == tesla_get_steer_ctrl_type(2);  // "LANE_KEEP_ASSIST"
 
       // Only consider rising edges while controls are not allowed
@@ -277,7 +273,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
     // We use 1/10 deg as a unit here
     int raw_angle_can = ((msg->data[0] & 0x7FU) << 8) | msg->data[1];
     int desired_angle = raw_angle_can - 16384;
-    int steer_control_type = msg->data[2] >> 6;
+    int steer_control_type = msg->data[2] >> 5;  // DAS_steeringControlType
     const int angle_ctrl_type = tesla_get_steer_ctrl_type(1);
     const int lkas_ctrl_type = tesla_get_steer_ctrl_type(2);
     bool steer_control_enabled = (steer_control_type == angle_ctrl_type) ||  // ANGLE_CONTROL

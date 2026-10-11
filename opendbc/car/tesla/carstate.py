@@ -118,9 +118,7 @@ class CarState(CarStateBase, CarStateExt):
     ret.stockAeb = cp_ap_party.vl["DAS_control"]["DAS_aebEvent"] == 1
 
     # LKAS
-    # On FSD 14+, ANGLE_CONTROL behavior changed to allow user winddown while actuating.
-    # FSD switched from using ANGLE_CONTROL to LANE_KEEP_ASSIST to likely keep the old steering override disengage logic.
-    # LKAS switched from LANE_KEEP_ASSIST to ANGLE_CONTROL to likely allow overriding LKAS events smoothly
+    # DAS_steeringControlType is decoded at its 3-bit width, see get_steer_ctrl_type for legacy 2-bit firmware
     lkas_ctrl_type = get_steer_ctrl_type(self.CP.flags, 2)
     ret.stockLkas = cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"] == lkas_ctrl_type  # LANE_KEEP_ASSIST
 
@@ -131,8 +129,9 @@ class CarState(CarStateBase, CarStateExt):
 
       # Because we don't have FSD 14 detection outside of a set of FW, we should check if this FW is accidentally missing from FSD_14_FW
       # 1. If in Autosteer or FSD, already caught by invalidLkasSetting
-      # 2. If in TACC and DAS ever sends ANGLE_CONTROL (1), we can infer it's trying to do LKAS on FSD 14+
-      angle_control = cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"] == 1  # ANGLE_CONTROL
+      # 2. If in TACC and DAS ever sends ANGLE_CONTROL in the legacy 2-bit encoding (top 2 bits = 1), it's actually
+      #    LANE_KEEP_ASSIST on FSD 14+ firmware
+      angle_control = int(cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"]) >> 1 == 1  # legacy ANGLE_CONTROL
       if not ret.invalidLkasSetting and angle_control and not self.CP.flags & TeslaFlags.FSD_14:
         self.suspected_fsd14 = True
 
