@@ -8,6 +8,7 @@ from opendbc.car.tesla.teslacan import get_steer_ctrl_type
 from opendbc.car.tesla.values import DBC, CANBUS, GEAR_MAP, STEER_THRESHOLD, TeslaFlags
 
 from opendbc.sunnypilot.car.tesla.carstate_ext import CarStateExt
+from opendbc.sunnypilot.car.tesla.values import SOFT_GAS_PRESS_PCT, SOFT_GAS_RELEASE_PCT, TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
@@ -26,6 +27,8 @@ class CarState(CarStateBase, CarStateExt):
     self.suspected_fsd14 = False
 
     self.hands_on_level = 0
+    self.accel_pedal_pos = 0.0
+    self.soft_gas_pressed = False
     self.das_control = None
 
   def update_autopark_state(self, autopark_state: str, cruise_enabled: bool):
@@ -48,7 +51,22 @@ class CarState(CarStateBase, CarStateExt):
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
 
     # Gas pedal
-    ret.gasPressed = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"] > 0
+    # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 20%) does not count as
+    # pressed so gentle braking may continue, matching stock TACC. Must match safety tesla.h.
+    #
+    # HYSTERESIS (20% on, 17.2% off). Without it a pedal resting exactly on the threshold flips
+    # gasPressed - and with it openpilot's longitudinal control - on and off at the sample rate.
+    # Logged route 0000024f segment 12: the pedal sat at 20.0/20.4% (raw 50/51, one bit apart)
+    # and longActive toggled 13 times in 1.5 s, after which the car's own DI faulted
+    # (accFaulted -> "Cruise Fault: Restart the Car"). Both thresholds are exact at 0.4 %/bit
+    # (raw 50 and 43), so this agrees with the safety firmware bit for bit.
+    self.accel_pedal_pos = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"]  # %, for GasBrakeBlend
+    if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD:
+      threshold = SOFT_GAS_RELEASE_PCT if self.soft_gas_pressed else SOFT_GAS_PRESS_PCT
+      self.soft_gas_pressed = self.accel_pedal_pos > threshold
+      ret.gasPressed = self.soft_gas_pressed
+    else:
+      ret.gasPressed = self.accel_pedal_pos > 0.0
 
     # Brake pedal
     ret.brakePressed = cp_party.vl["ESP_status"]["ESP_driverBrakeApply"] == 2
@@ -112,9 +130,7 @@ class CarState(CarStateBase, CarStateExt):
     ret.stockAeb = cp_ap_party.vl["DAS_control"]["DAS_aebEvent"] == 1
 
     # LKAS
-    # On FSD 14+, ANGLE_CONTROL behavior changed to allow user winddown while actuating.
-    # FSD switched from using ANGLE_CONTROL to LANE_KEEP_ASSIST to likely keep the old steering override disengage logic.
-    # LKAS switched from LANE_KEEP_ASSIST to ANGLE_CONTROL to likely allow overriding LKAS events smoothly
+    # DAS_steeringControlType is decoded at its 3-bit width, see get_steer_ctrl_type for legacy 2-bit firmware
     lkas_ctrl_type = get_steer_ctrl_type(self.CP.flags, 2)
     ret.stockLkas = cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"] == lkas_ctrl_type  # LANE_KEEP_ASSIST
 
@@ -125,8 +141,9 @@ class CarState(CarStateBase, CarStateExt):
 
       # Because we don't have FSD 14 detection outside of a set of FW, we should check if this FW is accidentally missing from FSD_14_FW
       # 1. If in Autosteer or FSD, already caught by invalidLkasSetting
-      # 2. If in TACC and DAS ever sends ANGLE_CONTROL (1), we can infer it's trying to do LKAS on FSD 14+
-      angle_control = cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"] == 1  # ANGLE_CONTROL
+      # 2. If in TACC and DAS ever sends ANGLE_CONTROL in the legacy 2-bit encoding (top 2 bits = 1), it's actually
+      #    LANE_KEEP_ASSIST on FSD 14+ firmware
+      angle_control = int(cp_ap_party.vl["DAS_steeringControl"]["DAS_steeringControlType"]) >> 1 == 1  # legacy ANGLE_CONTROL
       if not ret.invalidLkasSetting and angle_control and not self.CP.flags & TeslaFlags.FSD_14:
         self.suspected_fsd14 = True
 

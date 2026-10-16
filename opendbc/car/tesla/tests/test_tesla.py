@@ -1,12 +1,14 @@
 import re
 import unittest
 
-from opendbc.car import gen_empty_fingerprint
+from opendbc.can import CANPacker
+from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.tesla.interface import CarInterface
 from opendbc.car.tesla.fingerprints import FW_VERSIONS
 from opendbc.car.tesla.radar_interface import RADAR_START_ADDR
-from opendbc.car.tesla.values import CAR, FSD_14_FW
+from opendbc.car.tesla.teslacan import TeslaCAN
+from opendbc.car.tesla.values import CAR, DBC, FSD_14_FW, TeslaFlags
 
 Ecu = CarParams.Ecu
 
@@ -102,3 +104,24 @@ class TestTeslaFingerprint(unittest.TestCase):
         fingerprint[1][RADAR_START_ADDR] = 8
       CP = CarInterface.get_params(CAR.TESLA_MODEL_X, fingerprint, [], False, False, False)
       assert CP.radarUnavailable  # Always unavailable since no radar DBC
+
+
+class TestTeslaSteeringControlType(unittest.TestCase):
+  # Raw 3-bit DAS_steeringControlType (byte 2 bits 7:5) that openpilot puts on the bus
+  def _sent_ctrl_type(self, flags: int, enabled: bool, control_type: int) -> int:
+    CP = CarInterface.get_non_essential_params(CAR.TESLA_MODEL_3)
+    CP.flags = int(flags)
+    tesla_can = TeslaCAN(CP, CANPacker(DBC[CAR.TESLA_MODEL_3][Bus.party]))
+    return tesla_can.create_steering_control(0, enabled, control_type)[1][2] >> 5
+
+  def test_fsd_14_sends_3_bit_values(self):
+    # FSD 14 EPS firmware (92) ignores FSD (4), which the old flipped 2-bit encoding sent for ANGLE_CONTROL
+    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 1), 1)  # ANGLE_CONTROL
+    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 2), 2)  # LANE_KEEP_ASSIST (coop steering)
+    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, False, 1), 0)  # NONE
+
+  def test_legacy_sends_2_bit_values(self):
+    # Legacy firmware reads only the top 2 bits, so the bytes on the bus must not change there
+    self.assertEqual(self._sent_ctrl_type(0, True, 1), 1 << 1)  # ANGLE_CONTROL
+    self.assertEqual(self._sent_ctrl_type(0, True, 2), 2 << 1)  # LANE_KEEP_ASSIST (coop steering)
+    self.assertEqual(self._sent_ctrl_type(0, False, 1), 0)  # NONE
