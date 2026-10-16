@@ -234,14 +234,33 @@ class TestTeslaSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest, 
           self.assertFalse(self.safety.get_steering_disengage_prev())
 
   def test_soft_gas_threshold(self):
-    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 20% doesn't count as pressed
+    # sunnypilot: with SOFT_GAS_THRESHOLD, gas <= 20% doesn't count as pressed, and once it does
+    # the pedal has to fall to 17.2% before it counts as released (hysteresis). Thresholds are
+    # exact at 0.4 %/bit (raw 50 and 43) and must match carstate.py.
     prev_sp = self.safety.get_current_safety_param_sp()
     self.safety.set_current_safety_param_sp(prev_sp | TeslaSafetyFlagsSP.SOFT_GAS_THRESHOLD)
     self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())
     try:
-      for gas, pressed in ((0, False), (10, False), (19.6, False), (20, False), (20.4, True), (25, True), (100, True)):
+      # rising: nothing counts until past 20%, then releasing takes until 17.2%
+      sequence = (
+        (0, False), (10, False), (19.6, False), (20, False),   # under the press threshold
+        (20.4, True), (25, True), (100, True),                 # pressed
+        (20, True), (19.6, True), (18, True), (17.6, True),    # latched on the way down
+        (17.2, False), (0, False),                             # released at the release threshold
+        (20, False),                                           # and 20% alone does not re-press
+      )
+      for gas, pressed in sequence:
         self.assertTrue(self._rx(self._user_gas_msg(gas)))
         self.assertEqual(pressed, self.safety.get_gas_pressed_prev(), f"gas={gas}")
+
+      # a pedal resting on the press threshold must not toggle: this is what faulted the car's
+      # own cruise controller before the hysteresis existed
+      self.assertTrue(self._rx(self._user_gas_msg(20.4)))
+      for _ in range(20):
+        self.assertTrue(self._rx(self._user_gas_msg(20)))
+        self.assertTrue(self.safety.get_gas_pressed_prev())
+        self.assertTrue(self._rx(self._user_gas_msg(20.4)))
+        self.assertTrue(self.safety.get_gas_pressed_prev())
     finally:
       self.safety.set_current_safety_param_sp(prev_sp)
       self.safety.set_safety_hooks(CarParams.SafetyModel.tesla, self.safety.get_current_safety_param())

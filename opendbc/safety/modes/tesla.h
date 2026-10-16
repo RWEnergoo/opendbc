@@ -37,6 +37,10 @@ bool tesla_has_vehicle_bus = false;
 extern bool tesla_soft_gas_threshold;
 bool tesla_soft_gas_threshold = false;
 
+// sunnypilot: latched state of the soft gas threshold, for its hysteresis
+extern bool tesla_soft_gas_pressed;
+bool tesla_soft_gas_pressed = false;
+
 // Configured MADS screen button finger count (0 = disabled, 3-5 = expected touch-point count)
 extern uint8_t tesla_mads_screen_button_fingers;
 uint8_t tesla_mads_screen_button_fingers = 0U;
@@ -164,8 +168,19 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
       // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 20%, raw 50 at
       // 0.4%/bit) does not count as pressed so gentle braking may continue, matching stock
       // TACC blending. SNA (255) still counts as pressed. Must match carstate.py.
-      const uint8_t tesla_gas_threshold = tesla_soft_gas_threshold ? 50U : 0U;
-      gas_pressed = (msg->data[4] > tesla_gas_threshold);
+      //
+      // Hysteresis: once pressed, the pedal has to fall to 17.2% (raw 43) before it counts as
+      // released. A pedal resting on a single threshold otherwise toggles this at the sample
+      // rate, which flipped openpilot's longitudinal control on and off and faulted the car's
+      // own cruise controller.
+      if (tesla_soft_gas_threshold) {
+        const uint8_t tesla_gas_release = 43U;
+        const uint8_t tesla_gas_press = 50U;
+        tesla_soft_gas_pressed = msg->data[4] > (tesla_soft_gas_pressed ? tesla_gas_release : tesla_gas_press);
+        gas_pressed = tesla_soft_gas_pressed;
+      } else {
+        gas_pressed = (msg->data[4] > 0U);
+      }
     }
 
     // Brake pressed
@@ -397,6 +412,7 @@ static safety_config tesla_init(uint16_t param) {
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
   tesla_soft_gas_threshold = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_SOFT_GAS_THRESHOLD);
+  tesla_soft_gas_pressed = false;
 
   if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
     tesla_mads_screen_button_fingers = 3U;

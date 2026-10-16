@@ -7,6 +7,15 @@ See the LICENSE.md file in the root directory for more details.
 from enum import IntFlag
 
 
+# SOFT_GAS_THRESHOLD pedal thresholds in % of DI_accelPedalPos (0.4 %/bit).
+# Hysteresis: a pedal resting exactly on one threshold must not be able to toggle the
+# longitudinal override - that flipped it at the sample rate and faulted the car's own
+# cruise controller. Both values land exactly on a raw bit (50 and 43) so carstate.py and
+# safety tesla.h agree bit for bit; keep all three in sync.
+SOFT_GAS_PRESS_PCT = 20.0    # raw > 50 counts as gas pressed
+SOFT_GAS_RELEASE_PCT = 17.2  # raw <= 43 releases it again
+
+
 class TeslaFlagsSP(IntFlag):
   HAS_VEHICLE_BUS = 1  # Multi-finger infotainment press signal is present on the VEHICLE bus with the deprecated Tesla harness installed
   COOP_STEERING = 2  # Coop steering

@@ -5,10 +5,10 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 from opendbc.car import structs
-from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+from opendbc.sunnypilot.car.tesla.values import SOFT_GAS_PRESS_PCT, TeslaFlagsSP
 
-# Pedal window of the SOFT_GAS_THRESHOLD feature, must match carstate.py and safety tesla.h
-SOFT_GAS_MAX_PEDAL = 20.0  # %
+# Pedal window of the SOFT_GAS_THRESHOLD feature; the press threshold is the window's top
+SOFT_GAS_MAX_PEDAL = SOFT_GAS_PRESS_PCT  # %
 
 
 class GasBrakeBlend:

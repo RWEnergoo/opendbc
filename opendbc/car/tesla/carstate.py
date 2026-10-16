@@ -8,7 +8,7 @@ from opendbc.car.tesla.teslacan import get_steer_ctrl_type
 from opendbc.car.tesla.values import DBC, CANBUS, GEAR_MAP, STEER_THRESHOLD, TeslaFlags
 
 from opendbc.sunnypilot.car.tesla.carstate_ext import CarStateExt
-from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+from opendbc.sunnypilot.car.tesla.values import SOFT_GAS_PRESS_PCT, SOFT_GAS_RELEASE_PCT, TeslaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 
@@ -28,6 +28,7 @@ class CarState(CarStateBase, CarStateExt):
 
     self.hands_on_level = 0
     self.accel_pedal_pos = 0.0
+    self.soft_gas_pressed = False
     self.das_control = None
 
   def update_autopark_state(self, autopark_state: str, cruise_enabled: bool):
@@ -52,9 +53,20 @@ class CarState(CarStateBase, CarStateExt):
     # Gas pedal
     # sunnypilot: with SOFT_GAS_THRESHOLD a lightly feathered pedal (<= 20%) does not count as
     # pressed so gentle braking may continue, matching stock TACC. Must match safety tesla.h.
-    gas_threshold = 20.0 if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD else 0.0
+    #
+    # HYSTERESIS (20% on, 17.2% off). Without it a pedal resting exactly on the threshold flips
+    # gasPressed - and with it openpilot's longitudinal control - on and off at the sample rate.
+    # Logged route 0000024f segment 12: the pedal sat at 20.0/20.4% (raw 50/51, one bit apart)
+    # and longActive toggled 13 times in 1.5 s, after which the car's own DI faulted
+    # (accFaulted -> "Cruise Fault: Restart the Car"). Both thresholds are exact at 0.4 %/bit
+    # (raw 50 and 43), so this agrees with the safety firmware bit for bit.
     self.accel_pedal_pos = cp_party.vl["DI_systemStatus"]["DI_accelPedalPos"]  # %, for GasBrakeBlend
-    ret.gasPressed = self.accel_pedal_pos > gas_threshold
+    if self.CP_SP.flags & TeslaFlagsSP.SOFT_GAS_THRESHOLD:
+      threshold = SOFT_GAS_RELEASE_PCT if self.soft_gas_pressed else SOFT_GAS_PRESS_PCT
+      self.soft_gas_pressed = self.accel_pedal_pos > threshold
+      ret.gasPressed = self.soft_gas_pressed
+    else:
+      ret.gasPressed = self.accel_pedal_pos > 0.0
 
     # Brake pedal
     ret.brakePressed = cp_party.vl["ESP_status"]["ESP_driverBrakeApply"] == 2
