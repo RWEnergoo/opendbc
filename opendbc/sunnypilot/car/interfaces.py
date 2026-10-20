@@ -135,6 +135,13 @@ def _initialize_coop_steering(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
     if int(params_dict.get("TeslaGapAdjustTilt", 0)) == 1:
       CP_SP.flags |= TeslaFlagsSP.GAP_ADJUST_TILT.value
 
+    if int(params_dict.get("TeslaSpeedLimitPulse", 0)) == 1 and CP.openpilotLongitudinalControl:
+      CP_SP.flags |= TeslaFlagsSP.SPEED_LIMIT_PULSE.value
+      # openpilot keeps its own set speed while this is on, so it can hold below the car's.
+      # The car still owns the number on the dash; a change of that number means the driver
+      # turned the scroll wheel, which hands control straight back.
+      CP_SP.pcmCruiseSpeed = False
+
 
 def _initialize_tesla_mads_screen_button(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                                          params_dict: dict[str, str]) -> None:
