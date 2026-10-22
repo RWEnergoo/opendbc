@@ -168,8 +168,11 @@ class CarStateExt:
       if self.scroll_pressed_frames == ALL_OFF_HOLD_FRAMES:
         cancel = True
 
-      # Shifting into Park is the same all-off pulse: nothing should stay engaged in P
-      if ret.gearShifter == GearShifter.park and self.gear_shifter_prev != GearShifter.park:
+      # Shifting into Park is the same all-off pulse: nothing should stay engaged in P.
+      # The first CAN frames of a drive report an unknown gear, so unknown -> park is the parser
+      # catching up and not a shift: without this guard every cold wake in P fired a stray cancel
+      # (found on the road 2026-10-22, routes 00000267 and 0000026b).
+      if ret.gearShifter == GearShifter.park and self.gear_shifter_prev not in (GearShifter.park, GearShifter.unknown):
         cancel = True
       self.gear_shifter_prev = ret.gearShifter
 
