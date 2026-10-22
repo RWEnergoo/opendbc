@@ -33,6 +33,18 @@ static bool tesla_autopark_prev = false;
 extern bool tesla_has_vehicle_bus;
 bool tesla_has_vehicle_bus = false;
 
+// sunnypilot: light accelerator does not count as gas pressed
+extern bool tesla_soft_gas_threshold;
+bool tesla_soft_gas_threshold = false;
+
+// sunnypilot: latched state of the soft gas threshold, for its hysteresis
+extern bool tesla_soft_gas_pressed;
+bool tesla_soft_gas_pressed = false;
+
+// Configured MADS screen button finger count (0 = disabled, 3-5 = expected touch-point count)
+extern uint8_t tesla_mads_screen_button_fingers;
+uint8_t tesla_mads_screen_button_fingers = 0U;
+
 static uint8_t tesla_get_counter(const CANPacket_t *msg) {
 
   uint8_t cnt = 0;
@@ -111,15 +123,11 @@ static bool tesla_get_quality_flag_valid(const CANPacket_t *msg) {
 }
 
 static int tesla_get_steer_ctrl_type(const int ctrl_type) {
-  // Returns ANGLE_CONTROL-equivalent control type for FSD 14
+  // Returns the raw 3-bit DAS_steeringControlType (byte 2 bits 7:5) for a control type.
+  // FSD 14 firmware uses all 3 bits. Legacy firmware only uses the top 2 bits, so its values sit one bit higher
   int steer_ctrl_type = ctrl_type;
-  if (tesla_fsd_14) {
-    if (ctrl_type == 1) {
-      steer_ctrl_type = 2;
-    } else if (ctrl_type == 2) {
-      steer_ctrl_type = 1;
-    } else {
-    }
+  if (!tesla_fsd_14) {
+    steer_ctrl_type = ctrl_type * 2;
   }
   return steer_ctrl_type;
 }
@@ -157,7 +165,22 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // Gas pressed
     if (msg->addr == 0x118U) {
-      gas_pressed = (msg->data[4] != 0U);
+      // sunnypilot: with SOFT_GAS_THRESHOLD, a lightly feathered pedal (<= 20%, raw 50 at
+      // 0.4%/bit) does not count as pressed so gentle braking may continue, matching stock
+      // TACC blending. SNA (255) still counts as pressed. Must match carstate.py.
+      //
+      // Hysteresis: once pressed, the pedal has to fall to 17.2% (raw 43) before it counts as
+      // released. A pedal resting on a single threshold otherwise toggles this at the sample
+      // rate, which flipped openpilot's longitudinal control on and off and faulted the car's
+      // own cruise controller.
+      if (tesla_soft_gas_threshold) {
+        const uint8_t tesla_gas_release = 43U;
+        const uint8_t tesla_gas_press = 50U;
+        tesla_soft_gas_pressed = msg->data[4] > (tesla_soft_gas_pressed ? tesla_gas_release : tesla_gas_press);
+        gas_pressed = tesla_soft_gas_pressed;
+      } else {
+        gas_pressed = (msg->data[4] > 0U);
+      }
     }
 
     // Brake pressed
@@ -201,7 +224,9 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
   if (msg->bus == 1U) {
     if (msg->addr == 0x3DFU) {
-      mads_button_press = (msg->data[3] == 3U) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      if (tesla_mads_screen_button_fingers != 0U) {
+        mads_button_press = (msg->data[3] == tesla_mads_screen_button_fingers) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+      }
     }
   }
 
@@ -214,7 +239,7 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
 
     // DAS_steeringControl
     if (msg->addr == 0x488U) {
-      int steering_control_type = msg->data[2] >> 6;
+      int steering_control_type = msg->data[2] >> 5;  // DAS_steeringControlType
       bool tesla_stock_lkas_now = steering_control_type == tesla_get_steer_ctrl_type(2);  // "LANE_KEEP_ASSIST"
 
       // Only consider rising edges while controls are not allowed
@@ -263,7 +288,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
     // We use 1/10 deg as a unit here
     int raw_angle_can = ((msg->data[0] & 0x7FU) << 8) | msg->data[1];
     int desired_angle = raw_angle_can - 16384;
-    int steer_control_type = msg->data[2] >> 6;
+    int steer_control_type = msg->data[2] >> 5;  // DAS_steeringControlType
     const int angle_ctrl_type = tesla_get_steer_ctrl_type(1);
     const int lkas_ctrl_type = tesla_get_steer_ctrl_type(2);
     bool steer_control_enabled = (steer_control_type == angle_ctrl_type) ||  // ANGLE_CONTROL
@@ -380,8 +405,24 @@ static safety_config tesla_init(uint16_t param) {
 #endif
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER = 4;
+  const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER = 8;
+  const uint16_t TESLA_PARAM_SP_SOFT_GAS_THRESHOLD = 16;  // moved off bit 2: upstream took it for the MADS screen button
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
+  tesla_soft_gas_threshold = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_SOFT_GAS_THRESHOLD);
+  tesla_soft_gas_pressed = false;
+
+  if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
+    tesla_mads_screen_button_fingers = 3U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER)) {
+    tesla_mads_screen_button_fingers = 4U;
+  } else if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER)) {
+    tesla_mads_screen_button_fingers = 5U;
+  } else {
+    tesla_mads_screen_button_fingers = 0U;
+  }
 
   tesla_stock_aeb = false;
   tesla_stock_lkas = false;
