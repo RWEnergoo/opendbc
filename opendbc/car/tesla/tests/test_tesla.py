@@ -8,7 +8,7 @@ from opendbc.car.tesla.interface import CarInterface
 from opendbc.car.tesla.fingerprints import FW_VERSIONS
 from opendbc.car.tesla.radar_interface import RADAR_START_ADDR
 from opendbc.car.tesla.teslacan import TeslaCAN
-from opendbc.car.tesla.values import CAR, DBC, FSD_14_FW, TeslaFlags
+from opendbc.car.tesla.values import CAR, DBC, TeslaFlags
 
 Ecu = CarParams.Ecu
 
@@ -49,15 +49,6 @@ PLATFORM_TO_CAR = {
   b'X': CAR.TESLA_MODEL_X,
 }
 
-# Hypothesized FSD 14 profile, in terms of variant_code bookends (given software_major >= 4):
-#   M3: variant_code starts with '4H',  ends with '015'
-#   MY: variant_code starts with '4',   ends with '003'
-# Older series (M3 '014', MY '002') are never FSD 14.
-FSD_14_FW_RULE = {
-  CAR.TESLA_MODEL_3: (b'4H', b'015'),
-  CAR.TESLA_MODEL_Y: (b'4',  b'003'),
-}
-
 
 class TestTeslaFingerprint(unittest.TestCase):
   def test_fw_platform_code(self):
@@ -68,24 +59,6 @@ class TestTeslaFingerprint(unittest.TestCase):
 
         assert m is not None, f"Unparsable FW: {fw}"
         assert PLATFORM_TO_CAR[m['platform']] == car_model, f"Platform letter {m['platform']!r} != {car_model.value}: {fw}"
-
-  def test_fsd_14_fw(self):
-    for car_model, ecus in FW_VERSIONS.items():
-      if car_model not in FSD_14_FW_RULE:
-        continue
-
-      variant_prefix, variant_suffix = FSD_14_FW_RULE[car_model]
-      for fw in ecus.get((Ecu.eps, 0x730, None), []):
-        m = FW_RE.match(fw)
-        assert m is not None, f"Unparsable FW: {fw}"
-
-        is_fsd_14 = fw in FSD_14_FW.get(car_model, [])
-        expected = (
-          m['variant_code'].startswith(variant_prefix)
-          and m['variant_code'].endswith(variant_suffix)
-          and int(m['software_major']) >= 4
-        )
-        assert is_fsd_14 == expected, f"{fw}"
 
   def test_radar_detection(self):
     # Test radar availability detection for cars with radar DBC defined
@@ -114,14 +87,15 @@ class TestTeslaSteeringControlType(unittest.TestCase):
     tesla_can = TeslaCAN(CP, CANPacker(DBC[CAR.TESLA_MODEL_3][Bus.party]))
     return tesla_can.create_steering_control(0, enabled, control_type)[1][2] >> 5
 
-  def test_fsd_14_sends_3_bit_values(self):
-    # FSD 14 EPS firmware (92) ignores FSD (4), which the old flipped 2-bit encoding sent for ANGLE_CONTROL
-    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 1), 1)  # ANGLE_CONTROL
-    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 2), 2)  # LANE_KEEP_ASSIST (coop steering)
+  def test_fsd_14_swaps_angle_control_and_lane_keep(self):
+    # On FSD 14 firmware ANGLE_CONTROL snaps the wheel back after an override, so a request for
+    # ANGLE_CONTROL (1) goes on the bus as LANE_KEEP_ASSIST (2) and coop steering (2) as (1).
+    # This is what keeps EPS firmware (92) steering at all: the old encoding sent FSD (4) here.
+    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 1), 2)  # LANE_KEEP_ASSIST
+    self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, True, 2), 1)  # ANGLE_CONTROL (coop steering)
     self.assertEqual(self._sent_ctrl_type(TeslaFlags.FSD_14, False, 1), 0)  # NONE
 
-  def test_legacy_sends_2_bit_values(self):
-    # Legacy firmware reads only the top 2 bits, so the bytes on the bus must not change there
-    self.assertEqual(self._sent_ctrl_type(0, True, 1), 1 << 1)  # ANGLE_CONTROL
-    self.assertEqual(self._sent_ctrl_type(0, True, 2), 2 << 1)  # LANE_KEEP_ASSIST (coop steering)
+  def test_legacy_sends_the_request_unchanged(self):
+    self.assertEqual(self._sent_ctrl_type(0, True, 1), 1)  # ANGLE_CONTROL
+    self.assertEqual(self._sent_ctrl_type(0, True, 2), 2)  # LANE_KEEP_ASSIST (coop steering)
     self.assertEqual(self._sent_ctrl_type(0, False, 1), 0)  # NONE

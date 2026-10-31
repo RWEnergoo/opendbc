@@ -28,7 +28,7 @@ class TeslaFlagsSP(IntFlag):
   # 2-bit index into STEER_OVERRIDE_RESUME_DELAYS, see steer_override_pause.py
   STEER_OVERRIDE_RESUME_DELAY_BIT0 = 128
   STEER_OVERRIDE_RESUME_DELAY_BIT1 = 256
-  SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 10%) does not count as gas pressed; braking blends with pedal
+  SOFT_GAS_THRESHOLD = 512  # light accelerator (<= 20%) does not count as gas pressed; braking blends with pedal
   SIM_VEHICLE_BUS_LOSS = 1024  # dev/test: starve the button trigger's vehicle bus reads to exercise the failover path
   GAP_ADJUST_TILT = 2048  # right wheel tilt = following distance / experimental mode holds
   SPEED_LIMIT_PULSE = 4096  # follow the car's read speed limit, pulse-triggered, driver's set speed is the ceiling
